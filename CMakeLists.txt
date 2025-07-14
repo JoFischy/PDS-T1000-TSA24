@@ -14,22 +14,21 @@ include_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/incl
 link_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/libs")
 
 
-# Raylib: Suche installiertes Paket, sonst lade als Tarball
-
-set(RAYLIB_VERSION 5.0)
-find_package(raylib ${RAYLIB_VERSION} QUIET)
+# Raylib: Use vcpkg or system installation, fallback to FetchContent
+find_package(raylib QUIET)
 if (NOT raylib_FOUND)
   include(FetchContent)
+  
+  # Disable raylib examples and other extras to speed up build
+  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
+  
   FetchContent_Declare(
     raylib
     GIT_REPOSITORY https://github.com/raysan5/raylib.git
-    GIT_TAG ${RAYLIB_VERSION}
+    GIT_TAG 5.0
   )
-  FetchContent_GetProperties(raylib)
-  if (NOT raylib_POPULATED)
-    set(FETCHCONTENT_QUIET NO)
-    FetchContent_MakeAvailable(raylib)
-  endif()
+  FetchContent_MakeAvailable(raylib)
 endif()
 
 # Raylib-Header für den Compiler verfügbar machen

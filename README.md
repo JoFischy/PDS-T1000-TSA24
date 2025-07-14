@@ -67,7 +67,7 @@ Dieses Projekt integriert Python-basierte Kameraerkennung mit Raylib für die Ec
 │   ├── Kamera.py              # Python-Kameramodul
 │   ├── main.cpp               # Raylib Hauptprogramm  
 │   ├── py_runner.cpp          # Python-C++ Bridge
-│   ├── RaylibPythonAdder.cpp  # Display-Logik
+│   ├── CameraDisplay.cpp      # Display-Logik
 │   └── ...
 ├── include/                   # Header-Dateien
 ├── CMakeLists.txt            # Build-Konfiguration

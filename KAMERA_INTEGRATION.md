@@ -15,7 +15,7 @@ src/
 ├── Kamera.py              # Python-Kameramodul (im src Ordner)
 ├── main.cpp               # Raylib Hauptprogramm
 ├── py_runner.cpp          # Python-C++ Bridge mit persistentem Interpreter
-├── RaylibPythonAdder.cpp  # Raylib Display-Klasse
+├── CameraDisplay.cpp      # Raylib Display-Klasse
 └── ...
 ```
 

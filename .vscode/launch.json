@@ -2,13 +2,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Raylib Camera App",
+            "name": "Debug Camera Detection",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/Debug/raylib_example.exe",
+            "program": "${workspaceFolder}/build/Debug/camera_detection.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/build/Debug",
             "environment": [],
             "console": "externalTerminal",
             "preLaunchTask": "CMake: build"
