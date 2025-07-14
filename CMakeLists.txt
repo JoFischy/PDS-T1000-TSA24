@@ -8,12 +8,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/include/pybind11)
 
-# Find Python installation automatically
-find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-
-# Python-Header und Libs automatisch einbinden
-include_directories(${Python3_INCLUDE_DIRS})
-link_directories(${Python3_LIBRARY_DIRS})
+# Python-Header und Libs aus der lokalen Installation einbinden
+# TODO: Make this portable for team collaboration
+include_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/include")
+link_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/libs")
 
 
 # Raylib: Suche installiertes Paket, sonst lade als Tarball
@@ -39,10 +37,10 @@ include_directories(${raylib_SOURCE_DIR}/src)
 
 
 
-# Nur Raylib-Testprogramm bauen
-add_executable(raylib_example
+# Camera Red Object Detection Program
+add_executable(camera_detection
     src/main.cpp
-    src/RaylibPythonAdder.cpp
+    src/CameraDisplay.cpp
     src/py_runner.cpp
 )
-target_link_libraries(raylib_example PRIVATE raylib ${Python3_LIBRARIES})
+target_link_libraries(camera_detection PRIVATE raylib python313)

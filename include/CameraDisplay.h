@@ -3,9 +3,9 @@
 #include <vector>
 #include "../include/py_runner.h"
 
-class RaylibPythonAdder {
+class CameraDisplay {
 public:
-    RaylibPythonAdder();
+    CameraDisplay();
     void update();
     void draw() const;
 private:

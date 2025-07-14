@@ -20,22 +20,28 @@ Dieses Projekt integriert Python-basierte Kameraerkennung mit Raylib für die Ec
    cd PDS-T1000-TSA24
    ```
 
-2. **Build-Ordner erstellen und konfigurieren:**
+2. **Python Dependencies installieren:**
+   ```bash
+   pip install opencv-python numpy pybind11
+   ```
+
+3. **Build-Ordner erstellen und konfigurieren:**
    ```bash
    mkdir build
    cd build
    cmake .. "-DCMAKE_POLICY_VERSION_MINIMUM=3.11"
    ```
 
-3. **Projekt kompilieren:**
+4. **Projekt kompilieren:**
    ```bash
    cmake --build . --config Debug
    ```
 
-4. **Programm starten:**
+5. **Programm starten:**
    ```bash
    cd Debug
-   .\raylib_example.exe
+   ./raylib_example.exe    # Windows
+   ./raylib_example        # Linux/macOS
    ```
 
 ## 🎯 Features

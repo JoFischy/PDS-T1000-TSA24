@@ -1,6 +1,7 @@
 #include "../include/py_runner.h"
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
+#include <iostream>
 namespace py = pybind11;
 
 // Global interpreter instance
@@ -10,18 +11,24 @@ static bool module_loaded = false;
 
 void initialize_python() {
     if (guard == nullptr) {
-        guard = new py::scoped_interpreter{};
-        
-        // Add current project's src directory to Python path
-        py::module_ sys = py::module_::import("sys");
-        py::object path = sys.attr("path");
-        
-        // Get the directory of the current executable and construct src path
-        std::string src_path = "src";  // Relative to project root
-        path.attr("insert")(0, src_path);
-        
-        kamera_module = py::module_::import("Kamera");
-        module_loaded = true;
+        try {
+            guard = new py::scoped_interpreter{};
+            
+            // Add current project's src directory to Python path
+            py::module_ sys = py::module_::import("sys");
+            py::object path = sys.attr("path");
+            
+            // Use absolute path to src directory for reliable loading
+            std::string src_path = "C:/Users/jonas/OneDrive/Documents/GitHub/PDS-T1000-TSA24/src";
+            path.attr("insert")(0, src_path);
+            
+            kamera_module = py::module_::import("Kamera");
+            module_loaded = true;
+            
+        } catch (const std::exception& e) {
+            std::cerr << "Error initializing Python: " << e.what() << std::endl;
+            throw;
+        }
     }
 }
 

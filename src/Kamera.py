@@ -32,14 +32,14 @@ def get_red_object_coordinates():
     global cap
     if cap is None:
         if not init_camera():
-            # If camera initialization fails, return test coordinates
-            return get_test_coordinates()
+            # If camera initialization fails, return empty list
+            return []
     
     ret, frame = cap.read()
     if not ret:
         print("Error: Could not read frame.")
-        # If camera read fails, return test coordinates
-        return get_test_coordinates()
+        # If camera read fails, return empty list
+        return []
 
     # Konvertiere das Bild in den HSV-Farbraum
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -65,9 +65,9 @@ def get_red_object_coordinates():
             x, y, w, h = cv2.boundingRect(contour)
             positions.append((x, y, w, h))  # Position speichern
 
-    # If no red objects detected and camera is working, return test coordinates for demo
+    # If no red objects detected, return empty list
     if not positions:
-        return get_test_coordinates()
+        return []
 
     return positions
 
@@ -76,14 +76,14 @@ def get_red_object_coordinates_with_display():
     global cap
     if cap is None:
         if not init_camera():
-            # If camera initialization fails, return test coordinates
-            return get_test_coordinates()
+            # If camera initialization fails, return empty list
+            return []
     
     ret, frame = cap.read()
     if not ret:
         print("Error: Could not read frame.")
-        # If camera read fails, return test coordinates
-        return get_test_coordinates()
+        # If camera read fails, return empty list
+        return []
 
     # Konvertiere das Bild in den HSV-Farbraum
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -116,9 +116,9 @@ def get_red_object_coordinates_with_display():
     # Zeige das Ergebnis
     cv2.imshow('Red Object Detection', frame)
     
-    # If no red objects detected and camera is working, return test coordinates for demo
+    # If no red objects detected, return empty list
     if not positions:
-        return get_test_coordinates()
+        return []
 
     return positions
 

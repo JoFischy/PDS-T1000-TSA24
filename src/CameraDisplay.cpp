@@ -1,20 +1,20 @@
-#include "../include/RaylibPythonAdder.h"
+#include "../include/CameraDisplay.h"
 #include "raylib.h"
 #include "../include/py_runner.h"
 #include <string>
 #include <chrono>
 #include <ctime>
 
-RaylibPythonAdder::RaylibPythonAdder() {
+CameraDisplay::CameraDisplay() {
     // Initialize empty coordinates
 }
 
-void RaylibPythonAdder::update() {
+void CameraDisplay::update() {
     // Get new coordinates from camera with display
     coordinates = get_camera_coordinates_with_display();
 }
 
-void RaylibPythonAdder::draw() const {
+void CameraDisplay::draw() const {
     // Get current time for live indicator
     auto now = std::chrono::system_clock::now();
     auto time_t = std::chrono::system_clock::to_time_t(now);
