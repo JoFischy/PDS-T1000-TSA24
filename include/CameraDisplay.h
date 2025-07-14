@@ -9,5 +9,5 @@ public:
     void update();
     void draw() const;
 private:
-    std::vector<CameraCoordinate> coordinates;
+    CarDetectionData car_data;
 };

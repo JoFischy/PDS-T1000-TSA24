@@ -32,12 +32,98 @@ void initialize_python() {
     }
 }
 
-int run_python_add(int a, int b) {
+// Neue Struktur für Auto-Daten
+CarDetectionData get_car_detection_data() {
     initialize_python();
-    py::object result = kamera_module.attr("add")(a, b);
-    return result.cast<int>();
+    
+    CarDetectionData result = {0};  // Initialisierung mit Nullen
+    
+    try {
+        py::object data = kamera_module.attr("get_car_detection_data")();
+        py::dict data_dict = data.cast<py::dict>();
+        
+        // Rote Koordinaten (Heck)
+        if (!data_dict["red_coords"].is_none()) {
+            py::list red_list = data_dict["red_coords"].cast<py::list>();
+            result.red_x = red_list[0].cast<int>();
+            result.red_y = red_list[1].cast<int>();
+            result.has_red = true;
+        }
+        
+        // Gelbe Koordinaten (Spitze)
+        if (!data_dict["yellow_coords"].is_none()) {
+            py::list yellow_list = data_dict["yellow_coords"].cast<py::list>();
+            result.yellow_x = yellow_list[0].cast<int>();
+            result.yellow_y = yellow_list[1].cast<int>();
+            result.has_yellow = true;
+        }
+        
+        // Autorichtung in Grad
+        if (!data_dict["car_angle"].is_none()) {
+            result.car_angle = data_dict["car_angle"].cast<float>();
+            result.has_angle = true;
+        }
+        
+        // Abstand zwischen den Punkten
+        if (!data_dict["distance"].is_none()) {
+            result.distance = data_dict["distance"].cast<float>();
+            result.has_distance = true;
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error getting car detection data: " << e.what() << std::endl;
+        // result bleibt mit Nullwerten und false-Flags
+    }
+    
+    return result;
 }
 
+CarDetectionData get_car_detection_with_display() {
+    initialize_python();
+    
+    CarDetectionData result = {0};  // Initialisierung mit Nullen
+    
+    try {
+        py::object data = kamera_module.attr("get_car_detection_with_display")();
+        py::dict data_dict = data.cast<py::dict>();
+        
+        // Rote Koordinaten (Heck)
+        if (!data_dict["red_coords"].is_none()) {
+            py::list red_list = data_dict["red_coords"].cast<py::list>();
+            result.red_x = red_list[0].cast<int>();
+            result.red_y = red_list[1].cast<int>();
+            result.has_red = true;
+        }
+        
+        // Gelbe Koordinaten (Spitze)
+        if (!data_dict["yellow_coords"].is_none()) {
+            py::list yellow_list = data_dict["yellow_coords"].cast<py::list>();
+            result.yellow_x = yellow_list[0].cast<int>();
+            result.yellow_y = yellow_list[1].cast<int>();
+            result.has_yellow = true;
+        }
+        
+        // Autorichtung in Grad
+        if (!data_dict["car_angle"].is_none()) {
+            result.car_angle = data_dict["car_angle"].cast<float>();
+            result.has_angle = true;
+        }
+        
+        // Abstand zwischen den Punkten
+        if (!data_dict["distance"].is_none()) {
+            result.distance = data_dict["distance"].cast<float>();
+            result.has_distance = true;
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error getting car detection data with display: " << e.what() << std::endl;
+        // result bleibt mit Nullwerten und false-Flags
+    }
+    
+    return result;
+}
+
+// Legacy-Funktionen für Kompatibilität
 std::vector<CameraCoordinate> get_camera_coordinates() {
     initialize_python();
     
@@ -61,7 +147,6 @@ std::vector<CameraCoordinate> get_camera_coordinates() {
         
         return coordinates;
     } catch (const std::exception&) {
-        // Return empty vector if there's an error
         return std::vector<CameraCoordinate>();
     }
 }
@@ -89,7 +174,6 @@ std::vector<CameraCoordinate> get_camera_coordinates_with_display() {
         
         return coordinates;
     } catch (const std::exception&) {
-        // Return empty vector if there's an error
         return std::vector<CameraCoordinate>();
     }
 }

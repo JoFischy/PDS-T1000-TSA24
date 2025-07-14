@@ -9,20 +9,20 @@ int main() {
         // Initialize Python interpreter once at startup
         initialize_python();
         
-        InitWindow(800, 600, "Raylib Live Camera Red Object Detection");
-        CameraDisplay camera_detector;
+        InitWindow(800, 600, "Auto-Erkennung: Gelb=Spitze, Rot=Heck, Richtung in Grad");
+        CameraDisplay car_detector;
         SetTargetFPS(30);  // 30 FPS for smooth camera updates
         
         while (!WindowShouldClose()) {
-            // Update camera coordinates and display camera feed
-            camera_detector.update();
+            // Update car detection and display camera feed
+            car_detector.update();
             
             // Handle OpenCV window events
             handle_opencv_events();
             
             BeginDrawing();
             ClearBackground(RAYWHITE);
-            camera_detector.draw();
+            car_detector.draw();
             EndDrawing();
         }
         

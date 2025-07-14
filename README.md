@@ -1,6 +1,14 @@
-# PDS-T1000-TSA24 - Camera Object Detection with Raylib
+# PDS-T1000-TSA24 - Auto-Erkennung mit Richtungsbestimmung
 
-Dieses Projekt integriert Python-basierte Kameraerkennung mit Raylib für die Echtzeitanzeige von roten Objektkoordinaten.
+🚗 **Auto-Erkennungs-System** das rote (Heck) und gelbe (Spitze) Objekte erkennt und daraus die Fahrtrichtung in Grad berechnet.
+
+## 🎯 Was das System macht
+
+- **🟡 Gelb = Spitze** des Autos (Vorderseite)
+- **🔴 Rot = Heck** des Autos (Rückseite)  
+- **📐 Richtung** in Grad berechnen: **0° = oben, 90° = rechts, 180° = unten, 270° = links**
+- **📊 Live-Anzeige** in Raylib mit Kompass und Koordinaten
+- **👁️ Kamera-Feed** mit Markierungen und Richtungslinie
 
 ## 🚀 Schnellstart für Kollegen
 
@@ -40,34 +48,36 @@ Dieses Projekt integriert Python-basierte Kameraerkennung mit Raylib für die Ec
 5. **Programm starten:**
    ```bash
    cd Debug
-   ./raylib_example.exe    # Windows
-   ./raylib_example        # Linux/macOS
+   ./camera_detection.exe    # Windows
+   ./camera_detection        # Linux/macOS
    ```
 
 ## 🎯 Features
 
-### Dual-Display System
-- **OpenCV-Fenster**: Live-Kamerabild mit grünen Kästen um rote Objekte
-- **Raylib-Fenster**: Detaillierte Koordinateninformationen in Echtzeit
+### Auto-Erkennungs-System
+- **🟡 Gelbe Objekte** = Spitze/Vorderseite des Autos
+- **🔴 Rote Objekte** = Heck/Rückseite des Autos
+- **📐 Richtungsberechnung** zwischen Heck und Spitze in Grad (0° = oben)
+- **📏 Abstandsmessung** zwischen den beiden Punkten
 
-### Echtzeit-Objekterkennung
-- Erkennt rote Objekte in HSV-Farbraum
-- 30 FPS Update-Rate
-- Automatisches Fallback auf animierte Testdaten wenn keine Kamera verfügbar
+### Dual-Display System
+- **OpenCV-Fenster**: Live-Kamerabild mit farbigen Markierungen und Richtungslinie
+- **Raylib-Fenster**: Kompass, Koordinaten, Winkel und Status-Übersicht
 
 ### Performance-Optimiert
 - Persistenter Python-Interpreter (wird nur einmal geladen)
-- Optimierte Kamera-Settings (640x480 @ 30 FPS)
-- Minimale Latenz durch gecachte Module
+- Optimierte Kamera-Settings (640x480 @ 30 FPS)  
+- HSV-Farbraum für präzise Farberkennung
+- Morphologie-Filter gegen Bildrauschen
 
 ## 📁 Projektstruktur
 
 ```
 ├── src/
-│   ├── Kamera.py              # Python-Kameramodul
+│   ├── Kamera.py              # Auto-Erkennungsmodul (Rot + Gelb)
 │   ├── main.cpp               # Raylib Hauptprogramm  
 │   ├── py_runner.cpp          # Python-C++ Bridge
-│   ├── CameraDisplay.cpp      # Display-Logik
+│   ├── CameraDisplay.cpp      # Auto-Anzeige mit Kompass
 │   └── ...
 ├── include/                   # Header-Dateien
 ├── CMakeLists.txt            # Build-Konfiguration
