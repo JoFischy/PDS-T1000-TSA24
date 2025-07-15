@@ -43,6 +43,11 @@ Makefile
 .vscode/settings.json
 .idea/
 
+# Local configuration files
+src/py_runner.cpp
+CMakeLists.txt
+.vscode/tasks.json
+
 # OS files
 Thumbs.db
 .DS_Store
