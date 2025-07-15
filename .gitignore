@@ -41,7 +41,6 @@ Makefile
 # IDE files
 .vs/
 .vscode/settings.json
-.vscode/tasks.json
 .idea/
 
 # Local configuration files

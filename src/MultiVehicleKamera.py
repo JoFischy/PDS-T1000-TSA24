@@ -362,3 +362,48 @@ def cleanup_multi_vehicle_detection():
     if global_detector is not None:
         global_detector.cleanup_camera()
         global_detector = None
+
+# === C++ Bridge Functions ===
+def initialize_4_vehicle_fleet():
+    """Initialisiert die 4-Fahrzeug-Flotte für C++ Bridge"""
+    global global_detector
+    global_detector = MultiVehicleDetector()
+    if global_detector.initialize_camera():
+        print("4-Fahrzeug-Flotte erfolgreich initialisiert")
+        return True
+    else:
+        print("Fehler bei der Kamera-Initialisierung")
+        return False
+
+def detect_all_vehicles():
+    """Gibt Erkennungsdaten für alle 4 Fahrzeuge zurück (für C++ Bridge)"""
+    global global_detector
+    if global_detector is None:
+        return []
+    
+    detection_data = global_detector.detect_all_vehicles()
+    
+    # Konvertiere in Format das C++ erwartet
+    result = []
+    for i, detection in enumerate(detection_data):
+        vehicle_data = {
+            'position': {
+                'x': detection['position']['x'] if detection['detected'] else 0.0,
+                'y': detection['position']['y'] if detection['detected'] else 0.0
+            },
+            'detected': detection['detected'],
+            'angle': detection['angle'],
+            'distance': detection['distance'],
+            'rear_color': detection['rear_color'].lower()
+        }
+        result.append(vehicle_data)
+    
+    return result
+
+def show_camera_with_fleet_detection():
+    """Zeigt Kamera-Feed mit Flotten-Erkennung (für C++ Bridge)"""
+    show_multi_vehicle_feed()
+
+def cleanup_resources():
+    """Bereinigt Ressourcen (für C++ Bridge)"""
+    cleanup_multi_vehicle_detection()
