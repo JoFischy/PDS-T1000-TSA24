@@ -23,7 +23,7 @@ void initialize_python() {
             py::object path = sys.attr("path");
             
             // Use absolute path to src directory for reliable loading
-            std::string src_path = "C:/Users/jonas/OneDrive/Documents/GitHub/PDS-T1000-TSA24/src";
+            std::string src_path = "C:/Users/henri/Documents/GitHub/PDS-T1000-TSA24/src";
             path.attr("insert")(0, src_path);
             
             std::cout << "Python interpreter initialized for Multi-Vehicle Fleet" << std::endl;

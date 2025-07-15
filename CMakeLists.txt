@@ -10,26 +10,20 @@ include_directories(${CMAKE_SOURCE_DIR}/include/pybind11)
 
 # Python-Header und Libs aus der lokalen Installation einbinden
 # TODO: Make this portable for team collaboration
-include_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/include")
-link_directories("C:/Users/jonas/AppData/Local/Programs/Python/Python313/libs")
+include_directories("C:/Users/henri/AppData/Local/Programs/Python/Python313/include")
+link_directories("C:/Users/henri/AppData/Local/Programs/Python/Python313/libs")
 
 
-# Raylib: Use vcpkg or system installation, fallback to FetchContent
-find_package(raylib QUIET)
-if (NOT raylib_FOUND)
-  include(FetchContent)
-  
-  # Disable raylib examples and other extras to speed up build
-  set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
-  
-  FetchContent_Declare(
-    raylib
-    GIT_REPOSITORY https://github.com/raysan5/raylib.git
-    GIT_TAG 5.0
-  )
-  FetchContent_MakeAvailable(raylib)
+# Raylib setup
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/raylib/src")
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external")
+    execute_process(
+        COMMAND git clone --depth 1 --branch 5.0 https://github.com/raysan5/raylib.git raylib
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/external"
+    )
 endif()
+
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/external/raylib" raylib_build)
 
 # Raylib-Header für den Compiler verfügbar machen
 include_directories(${raylib_SOURCE_DIR}/src)
