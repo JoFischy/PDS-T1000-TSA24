@@ -102,10 +102,11 @@ cd build\Debug
 ## ✅ Erfolgreiche Installation testen
 
 ### Programm startet ohne Fehler:
-- ✅ Raylib-Fenster öffnet sich
-- ✅ 2x2 Grid mit 4 Fahrzeug-Panels
-- ✅ Kamera-Feed wird angezeigt
-- ✅ Konsole zeigt: "Python interpreter initialized for Multi-Vehicle Fleet"
+- ✅ **Raylib-Fenster** öffnet sich (1000x700px)
+- ✅ **2x2 Grid** mit 4 Fahrzeug-Panels (Auto-1 bis Auto-4)
+- ✅ **OpenCV-Kamerafenster** "Multi-Vehicle Detection - Vereinfachte Darstellung" 
+- ✅ **Konsole zeigt**: "Multi-Vehicle Kamera initialisiert"
+- ✅ **Fahrzeug-Konfiguration**: Gelb vorne, verschiedene Heckfarben
 
 ### Fehler-Diagnose:
 
@@ -129,10 +130,11 @@ cd build\Debug
 3. **Kamera positionieren** für gute Sicht auf alle Fahrzeuge
 
 ### Erwartete Ausgabe:
-- Live-Kamerabild in allen 4 Panels
-- Erkannte Fahrzeuge mit Position und Winkel
-- Kompass-Anzeigen für Fahrtrichtung
-- Status-Informationen in der Konsole
+- **Raylib-Fenster**: 2x2 Grid mit 4 Fahrzeug-Panels
+- **OpenCV-Kamerafenster**: "Multi-Vehicle Detection - Vereinfachte Darstellung"
+- **Fahrzeugdarstellung**: Hauptposition als großer Kreis mit Richtungspfeil
+- **Status-Informationen**: Position, Winkel, Distanz pro Fahrzeug
+- **Vereinfachte Struktur**: Nur Hauptposition + Fahrzeuggröße
 
 ## 🔧 Erweiterte Konfiguration
 
@@ -143,7 +145,7 @@ cap = cv2.VideoCapture(0)  # Ändere 0 zu 1, 2, etc.
 ```
 
 ### HSV-Werte anpassen (bei anderen Lichtverhältnissen):
-In `MultiVehicleKamera.py` - Funktionen `find_yellow_points()`, `find_red_points()`, etc.
+In `MultiVehicleKamera.py` - Funktionen `find_all_color_centers()` für Farberkennung
 
 ## 🆘 Support
 
@@ -157,10 +159,33 @@ Bei Problemen:
 
 ## Erwartetes Verhalten
 
-- **Raylib-Fenster**: Zeigt Koordinaten der erkannten roten Objekte
-- **Kamera-Fenster**: Live-Kamerabild mit grünen Rahmen um rote Objekte
-- **Keine roten Objekte**: Leeres Raylib-Fenster
-- **ESC**: Programm beenden
+### **Raylib UI-Fenster (1000x700px)**:
+- **2x2 Grid Layout** für 4 Fahrzeuge
+- **Auto-1 (Oben Links)**: Gelb → Rot
+- **Auto-2 (Oben Rechts)**: Gelb → Blau  
+- **Auto-3 (Unten Links)**: Gelb → Grün
+- **Auto-4 (Unten Rechts)**: Gelb → Lila
+- **Status pro Panel**: Position, Winkel, Distanz, Kompass
+- **Vereinfachte Darstellung**: Nur Hauptposition statt Front+Heck
+
+### **OpenCV-Kamerafenster**:
+- **Titel**: "Multi-Vehicle Detection - Vereinfachte Darstellung"
+- **Fahrzeugdarstellung**: Großer farbiger Kreis an Hauptposition
+- **Richtungspfeil**: Zeigt Fahrtrichtung  
+- **Distanz-Anzeige**: Fahrzeuggröße in Pixeln
+- **Status-Info**: "Erkannt: X/4 Autos" oben links
+- **ESC-Taste**: Programm beenden
+
+### **Vereinfachtes Datenmodell**:
+```cpp
+struct VehicleDetectionData {
+    Point2D position;        // Hauptposition (Schwerpunkt)
+    bool detected;           // Einfacher Status
+    float angle;             // Richtung in Grad
+    float distance;          // Abstand Front-Heck (Fahrzeuggröße)
+    string rear_color;       // Identifikation (rot, blau, grün, lila)
+}
+```
 
 ## Troubleshooting
 
@@ -178,19 +203,41 @@ ModuleNotFoundError: No module named 'cv2'
 
 ### Kamera nicht verfügbar
 ```
-Error: Could not open video
+Multi-Vehicle Kamera initialisiert
+Kein Kamerabild empfangen!
 ```
-**Lösung**: Andere Programme schließen die die Kamera verwenden
+**Lösung**: 
+- USB-Kamera anschließen und Treiber prüfen
+- Andere Programme schließen, die die Kamera verwenden
+- Kamera-Index in `MultiVehicleKamera.py` ändern (`cv2.VideoCapture(1)` statt `(0)`)
+
+### Fahrzeuge werden nicht erkannt
+**Symptome**: Raylib zeigt "NICHT ERKANNT" für alle Fahrzeuge
+**Lösung**:
+- Beleuchtung verbessern
+- HSV-Werte in `MultiVehicleKamera.py` anpassen
+- Fahrzeuge mit deutlichen gelben/farbigen Markierungen verwenden
+- Kamera näher an die Fahrzeuge positionieren
 
 ### Build Fehler mit Python Libraries
 **Lösung**: CMakeLists.txt prüfen - automatische Python-Erkennung sollte funktionieren
 
 ## System-Kompatibilität
 
-✅ **Automatisch erkannt**:
+### ✅ **Vereinfachte Architektur**:
+- **Header-Only Design**: `Vehicle.h` ohne `.cpp` (nur Datenstrukturen)
+- **Intelligente Zuordnung**: Distance-Based Assignment Algorithmus
+- **Einheitliche Frontfarbe**: Alle Fahrzeuge haben gelbe Fronten
+- **4 Heckfarben**: Rot, Blau, Grün, Lila zur Identifikation
+- **Hauptposition**: Schwerpunkt zwischen Front- und Heckpunkt
+- **Distanz-Messung**: Abstand Front-Heck als Fahrzeuggröße
+
+### ✅ **Automatisch erkannt**:
 - Python Installation path
 - Python Include directories  
 - Python Libraries
-- Projekt source directory
+- Projekt source directory (relativer Pfad)
 
-❌ **Manuell anpassen falls nötig**: Nur bei sehr exotischen Python-Installationen
+### ⚠️ **Möglicherweise anzupassen**:
+- Nur bei exotischen Python-Installationen
+- Bei mehreren Python-Versionen parallel

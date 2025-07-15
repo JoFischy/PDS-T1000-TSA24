@@ -8,29 +8,20 @@ struct Point2D {
     Point2D(float x_, float y_) : x(x_), y(y_) {}
 };
 
-// Datenstruktur für Fahrzeugerkennung
+// Vereinfachte Datenstruktur für Fahrzeugerkennung
 struct VehicleDetectionData {
-    // Koordinaten
-    Point2D front_pos;          // Position der vorderen Farbe (Gelb)
-    Point2D rear_pos;           // Position der hinteren Farbe (Identifikation)
+    // Hauptposition (Schwerpunkt zwischen Front und Heck)
+    Point2D position;           // Hauptkoordinate des Fahrzeugs
     
     // Erkennungsstatus
-    bool has_front;             // Vordere Farbe erkannt?
-    bool has_rear;              // Hintere Farbe erkannt?
-    bool has_angle;             // Richtung berechenbar?
+    bool detected;              // Fahrzeug vollständig erkannt?
     
-    // Richtungsdaten
-    float angle_degrees;        // Richtung in Grad (0° = nach oben)
-    float distance_pixels;      // Abstand zwischen den Farben
+    // Richtung und Größe
+    float angle;                // Richtung in Grad (0° = nach rechts)
+    float distance;             // Abstand zwischen Front- und Heckpunkt (Fahrzeuggröße)
     
-    // Fahrzeug-Info
-    std::string vehicle_name;   // Name des Fahrzeugs (Auto-1, Auto-2, etc.)
-    std::string front_color;    // Name der vorderen Farbe (immer "Gelb")
-    std::string rear_color;     // Name der hinteren Farbe (Rot, Blau, Grün, Lila)
-    
-    VehicleDetectionData() : 
-        front_pos(0, 0), rear_pos(0, 0),
-        has_front(false), has_rear(false), has_angle(false),
-        angle_degrees(0), distance_pixels(0),
-        vehicle_name(""), front_color("Gelb"), rear_color("") {}
+    // Identifikation
+    std::string rear_color;     // Heckfarbe zur Identifikation (rot, blau, grün, lila)
+      // Standardkonstruktor
+    VehicleDetectionData() : position(0, 0), detected(false), angle(0), distance(0), rear_color("") {}
 };

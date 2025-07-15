@@ -43,7 +43,7 @@ cmake --build build --config Debug
 
 ## 📋 Setup für Team-Kollegen
 
-**⚠️ WICHTIG**: Vor dem ersten Build müssen lokale Pfade angepasst werden!
+**⚠️ WICHTIG**: System verwendet jetzt vereinfachte Datenstruktur!
 
 Siehe `SETUP.md` für detaillierte Anweisungen.
 
@@ -79,10 +79,11 @@ Das System verwendet einen Distance-Based Assignment Algorithmus:
 ```
 
 Jedes Panel zeigt:
-- Fahrzeugposition (X, Y)
-- Richtungswinkel mit Kompass
-- Status (Erkannt/Nicht erkannt)
-- Live-Kamerabild-Overlay
+- **Hauptposition** (X, Y) - Schwerpunkt des Fahrzeugs
+- **Richtungswinkel** mit Kompass-Visualisierung
+- **Status** (Erkannt/Nicht erkannt)
+- **Fahrzeuggröße** (Distanz in Pixeln)
+- **Heckfarbe** zur Identifikation
 
 ## 🔍 Computer Vision Details
 
@@ -96,7 +97,9 @@ Jedes Panel zeigt:
 ### Bildverarbeitung
 - Morphologische Operationen zur Rauschreduzierung
 - Konturerkennung für präzise Farbpunkt-Lokalisierung
-- Winkelberechnung zwischen Front- und Heckpunkt
+- **Distance-Based Pairing**: Intelligente Zuordnung nächster Farbpaare
+- **Schwerpunkt-Berechnung**: Hauptposition zwischen Front- und Heckpunkt
+- **Vereinfachte Datenstruktur**: Nur Hauptposition + Distanz
 
 ## 🏗️ Projektstruktur
 
@@ -108,7 +111,7 @@ Jedes Panel zeigt:
 │   ├── py_runner.cpp              # Python-C++ Bridge
 │   └── MultiVehicleKamera.py      # Computer Vision Engine
 ├── include/
-│   ├── Vehicle.h                  # Datenstrukturen
+│   ├── Vehicle.h                  # Vereinfachte Datenstrukturen (Header-Only)
 │   ├── MultiCarDisplay.h          # UI-Header
 │   ├── VehicleFleet.h            # Fleet-Management
 │   └── py_runner.h               # Python-Bridge

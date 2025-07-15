@@ -208,7 +208,7 @@ class MultiVehicleDetector:
             # Intelligente Zuordnung der nächsten Paare
             assignments = self.assign_closest_pairs(yellow_positions, rear_colors)
             
-            # Ergebnisse formatieren
+            # Ergebnisse im vereinfachten Format
             detections = []
             for vehicle in self.vehicles:
                 vehicle_name = vehicle['name']
@@ -217,24 +217,28 @@ class MultiVehicleDetector:
                     'has_front': False, 'has_rear': False, 'distance': 0
                 })
                 
+                # Vereinfachte Struktur: Nur Hauptposition + Distanz
                 detection = {
-                    'vehicle_name': vehicle_name,
-                    'front_color': vehicle['front_color'],
-                    'rear_color': vehicle['rear_color'],
-                    'front_pos': (float(assignment['front_pos'][0]), float(assignment['front_pos'][1])),
-                    'rear_pos': (float(assignment['rear_pos'][0]), float(assignment['rear_pos'][1])),
-                    'has_front': assignment['has_front'],
-                    'has_rear': assignment['has_rear'],
-                    'has_angle': False,
-                    'angle_degrees': 0.0,
-                    'distance_pixels': assignment.get('distance', 0.0)
+                    'position': {'x': 0.0, 'y': 0.0},
+                    'detected': False,
+                    'angle': 0.0,
+                    'distance': 0.0,
+                    'rear_color': vehicle['rear_color']
                 }
                 
-                # Berechne Richtung wenn beide Farben erkannt
+                # Berechne Hauptposition und Daten wenn beide Farben erkannt
                 if assignment['has_front'] and assignment['has_rear']:
-                    detection['angle_degrees'] = self.calculate_angle(assignment['front_pos'], assignment['rear_pos'])
-                    detection['distance_pixels'] = assignment['distance']
-                    detection['has_angle'] = True
+                    front_pos = assignment['front_pos']
+                    rear_pos = assignment['rear_pos']
+                    
+                    # Hauptposition = Schwerpunkt zwischen Front und Heck
+                    center_x = (front_pos[0] + rear_pos[0]) / 2.0
+                    center_y = (front_pos[1] + rear_pos[1]) / 2.0
+                    
+                    detection['position'] = {'x': center_x, 'y': center_y}
+                    detection['detected'] = True
+                    detection['angle'] = self.calculate_angle(front_pos, rear_pos)
+                    detection['distance'] = assignment['distance']
                 
                 detections.append(detection)
             
@@ -259,7 +263,7 @@ class MultiVehicleDetector:
             detections = self.detect_all_vehicles()
             
             # Zähle erkannte Fahrzeuge
-            detected_count = sum(1 for d in detections if d['has_angle'])
+            detected_count = sum(1 for d in detections if d['detected'])
             
             # Header-Info
             cv2.putText(frame, f"EINHEITLICHE VORDERE FARBE: GELB", (10, 25), 
@@ -269,74 +273,54 @@ class MultiVehicleDetector:
             
             # Zeichne Erkennungen
             for i, detection in enumerate(detections):
+                vehicle_name = f"Auto-{i+1}"
                 # Fahrzeugname und Status (rechts)
-                status_text = f"{detection['vehicle_name']}: "
-                if detection['has_angle']:
-                    status_text += f"{int(detection['angle_degrees'])}° - {detection['rear_color']}"
+                status_text = f"{vehicle_name}: "
+                if detection['detected']:
+                    status_text += f"{int(detection['angle'])}° - {detection['rear_color']}"
                 else:
                     status_text += f"Nicht erkannt - {detection['rear_color']}"
                 
                 cv2.putText(frame, status_text, (frame.shape[1] - 300, 30 + i * 25), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
-                # Zeichne erkannte Punkte
-                if detection['has_front']:
-                    cv2.circle(frame, (int(detection['front_pos'][0]), int(detection['front_pos'][1])), 
-                              8, (0, 255, 255), 3)  # Gelb für vorne (einheitlich)
-                    cv2.putText(frame, "GELB", (int(detection['front_pos'][0]) + 12, int(detection['front_pos'][1]) - 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
-                
-                if detection['has_rear']:
-                    # Farbe je nach Fahrzeug
-                    if detection['rear_color'] == 'Rot':
-                        color = (0, 0, 255)
-                    elif detection['rear_color'] == 'Blau':
-                        color = (255, 0, 0)
-                    elif detection['rear_color'] == 'Grün':
-                        color = (0, 255, 0)
-                    elif detection['rear_color'] == 'Lila':
-                        color = (255, 0, 255)
-                    else:
-                        color = (128, 128, 128)
+                # Zeichne erkanntes Fahrzeug (vereinfachte Darstellung)
+                if detection['detected']:
+                    # Hauptposition als großer Kreis
+                    center_x = int(detection['position']['x'])
+                    center_y = int(detection['position']['y'])
                     
-                    cv2.circle(frame, (int(detection['rear_pos'][0]), int(detection['rear_pos'][1])), 
-                              8, color, 3)
-                    cv2.putText(frame, detection['rear_color'], 
-                               (int(detection['rear_pos'][0]) + 12, int(detection['rear_pos'][1]) - 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-                
-                # Zeichne Verbindungslinie und Richtungspfeil
-                if detection['has_angle']:
-                    front_pt = (int(detection['front_pos'][0]), int(detection['front_pos'][1]))
-                    rear_pt = (int(detection['rear_pos'][0]), int(detection['rear_pos'][1]))
+                    # Fahrzeug-spezifische Farbe
+                    if i == 0: vehicle_color = (0, 0, 255)      # Rot für Auto-1
+                    elif i == 1: vehicle_color = (255, 0, 0)    # Blau für Auto-2
+                    elif i == 2: vehicle_color = (0, 255, 0)    # Grün für Auto-3
+                    else: vehicle_color = (255, 0, 255)         # Lila für Auto-4
                     
-                    # Fahrzeug-spezifische Farbe für Linie
-                    if i == 0: line_color = (255, 255, 0)      # Cyan für Auto-1
-                    elif i == 1: line_color = (255, 128, 0)    # Orange für Auto-2
-                    elif i == 2: line_color = (128, 255, 0)    # Hellgrün für Auto-3
-                    else: line_color = (255, 0, 128)           # Pink für Auto-4
-                    
-                    cv2.line(frame, rear_pt, front_pt, line_color, 2)
+                    # Hauptkreis
+                    cv2.circle(frame, (center_x, center_y), 12, vehicle_color, 3)
+                    cv2.putText(frame, vehicle_name, (center_x + 15, center_y - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, vehicle_color, 2)
                     
                     # Richtungspfeil
-                    angle_rad = math.radians(detection['angle_degrees'])
+                    import math
+                    angle_rad = math.radians(detection['angle'])
+                    arrow_length = 20
                     arrow_end = (
-                        int(front_pt[0] + 15 * math.sin(angle_rad)),
-                        int(front_pt[1] - 15 * math.cos(angle_rad))
+                        int(center_x + arrow_length * math.cos(angle_rad)),
+                        int(center_y + arrow_length * math.sin(angle_rad))
                     )
-                    cv2.arrowedLine(frame, front_pt, arrow_end, line_color, 2)
+                    cv2.arrowedLine(frame, (center_x, center_y), arrow_end, vehicle_color, 3)
                     
-                    # Abstand anzeigen
-                    mid_x = (front_pt[0] + rear_pt[0]) // 2
-                    mid_y = (front_pt[1] + rear_pt[1]) // 2
-                    cv2.putText(frame, f"{detection['distance_pixels']:.0f}px", 
-                               (mid_x + 5, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, line_color, 1)
+                    # Distanz anzeigen
+                    dist_text = f"{detection['distance']:.0f}px"
+                    cv2.putText(frame, dist_text, (center_x - 10, center_y + 25), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, vehicle_color, 1)
             
             # Anweisungen
-            cv2.putText(frame, "ESC = Beenden | Intelligente Paar-Zuordnung aktiv", 
+            cv2.putText(frame, "ESC = Beenden | Vereinfachte Hauptposition + Distanz", 
                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
-            cv2.imshow("Multi-Vehicle Detection - Einheitlich Gelb Vorne", frame)
+            cv2.imshow("Multi-Vehicle Detection - Vereinfachte Darstellung", frame)
             
         except Exception as e:
             print(f"Fehler bei intelligentem Kamera-Feed: {e}")

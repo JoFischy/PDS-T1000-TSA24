@@ -102,25 +102,16 @@ std::vector<VehicleDetectionData> get_all_vehicle_detections() {
             py::dict detection = item.cast<py::dict>();
             
             VehicleDetectionData vehicle_data;
-            vehicle_data.vehicle_name = detection["vehicle_name"].cast<std::string>();
-            vehicle_data.front_color = detection["front_color"].cast<std::string>();
+            
+            // Position extrahieren (vereinfachte Struktur)
+            py::dict position = detection["position"].cast<py::dict>();
+            vehicle_data.position = Point2D(position["x"].cast<float>(), position["y"].cast<float>());
+            
+            // Status und Eigenschaften
+            vehicle_data.detected = detection["detected"].cast<bool>();
+            vehicle_data.angle = detection["angle"].cast<float>();
+            vehicle_data.distance = detection["distance"].cast<float>();
             vehicle_data.rear_color = detection["rear_color"].cast<std::string>();
-            
-            // Position extrahieren
-            py::tuple front_pos = detection["front_pos"].cast<py::tuple>();
-            vehicle_data.front_pos = Point2D(front_pos[0].cast<float>(), front_pos[1].cast<float>());
-            
-            py::tuple rear_pos = detection["rear_pos"].cast<py::tuple>();
-            vehicle_data.rear_pos = Point2D(rear_pos[0].cast<float>(), rear_pos[1].cast<float>());
-            
-            // Status
-            vehicle_data.has_front = detection["has_front"].cast<bool>();
-            vehicle_data.has_rear = detection["has_rear"].cast<bool>();
-            vehicle_data.has_angle = detection["has_angle"].cast<bool>();
-            
-            // Winkel und Distanz
-            vehicle_data.angle_degrees = detection["angle_degrees"].cast<float>();
-            vehicle_data.distance_pixels = detection["distance_pixels"].cast<float>();
             
             results.push_back(vehicle_data);
         }
