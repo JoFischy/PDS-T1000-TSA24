@@ -47,6 +47,7 @@ Makefile
 # Local configuration files
 src/py_runner.cpp
 CMakeLists.txt
+.vscode/tasks.json
 
 # OS files
 Thumbs.db
