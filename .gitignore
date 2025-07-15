@@ -13,6 +13,9 @@ __pycache__/
 .Python
 *.so
 
+# Alte/überflüssige Dateien ignorieren
+Kamera.py
+
 # Virtual environments
 .venv/
 venv/
