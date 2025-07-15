@@ -1,33 +1,48 @@
 
 #include "raylib.h"
-#include "../include/CameraDisplay.h"
+#include "../include/MultiCarDisplay.h"
 #include "../include/py_runner.h"
 #include <iostream>
 
 int main() {
     try {
-        // Initialize Python interpreter once at startup
+        // Initialize Python interpreter and vehicle fleet
         initialize_python();
         
-        InitWindow(800, 600, "Auto-Erkennung: Gelb=Spitze, Rot=Heck, Richtung in Grad");
-        CameraDisplay car_detector;
-        SetTargetFPS(30);  // 30 FPS for smooth camera updates
+        if (!initialize_vehicle_fleet()) {
+            std::cerr << "Fehler: Fahrzeugflotte konnte nicht initialisiert werden!" << std::endl;
+            return 1;
+        }
+        
+        InitWindow(1000, 700, "FAHRZEUGFLOTTE - 4 Autos mit Farberkennung");
+        MultiCarDisplay fleet_display;
+        SetTargetFPS(30);
+        
+        std::cout << "=== FAHRZEUGFLOTTE GESTARTET ===" << std::endl;
+        std::cout << "EINHEITLICHE VORDERE FARBE: GELB" << std::endl;
+        std::cout << "Auto-1: Gelb vorne, Rot hinten" << std::endl;
+        std::cout << "Auto-2: Gelb vorne, Blau hinten" << std::endl;
+        std::cout << "Auto-3: Gelb vorne, Grün hinten" << std::endl;
+        std::cout << "Auto-4: Gelb vorne, Lila hinten" << std::endl;
+        std::cout << "Intelligente Paar-Zuordnung aktiv!" << std::endl;
+        std::cout << "=================================" << std::endl;
         
         while (!WindowShouldClose()) {
-            // Update car detection and display camera feed
-            car_detector.update();
+            // Update fleet detection and display camera feed
+            fleet_display.update();
+            show_fleet_camera_feed();
             
             // Handle OpenCV window events
             handle_opencv_events();
             
             BeginDrawing();
             ClearBackground(RAYWHITE);
-            car_detector.draw();
+            fleet_display.draw();
             EndDrawing();
         }
         
-        // Cleanup before closing
-        cleanup_camera();
+        // Cleanup
+        cleanup_vehicle_fleet();
         CloseWindow();
         
     } catch (const std::exception& e) {

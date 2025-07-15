@@ -36,10 +36,11 @@ include_directories(${raylib_SOURCE_DIR}/src)
 
 
 
-# Camera Red Object Detection Program
+# Multi-Vehicle Fleet Detection Program
 add_executable(camera_detection
     src/main.cpp
-    src/CameraDisplay.cpp
+    src/MultiCarDisplay.cpp
+    src/VehicleFleet.cpp
     src/py_runner.cpp
 )
 target_link_libraries(camera_detection PRIVATE raylib python313)

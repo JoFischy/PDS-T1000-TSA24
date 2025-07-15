@@ -1,13 +1,17 @@
 #include "../include/py_runner.h"
+#include "../include/VehicleFleet.h"
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 #include <iostream>
+#include <memory>
+
 namespace py = pybind11;
 
 // Global interpreter instance
 static py::scoped_interpreter* guard = nullptr;
-static py::object kamera_module;
-static bool module_loaded = false;
+
+// Global vehicle fleet instance
+static std::unique_ptr<VehicleFleet> global_fleet = nullptr;
 
 void initialize_python() {
     if (guard == nullptr) {
@@ -22,8 +26,7 @@ void initialize_python() {
             std::string src_path = "C:/Users/jonas/OneDrive/Documents/GitHub/PDS-T1000-TSA24/src";
             path.attr("insert")(0, src_path);
             
-            kamera_module = py::module_::import("Kamera");
-            module_loaded = true;
+            std::cout << "Python interpreter initialized for Multi-Vehicle Fleet" << std::endl;
             
         } catch (const std::exception& e) {
             std::cerr << "Error initializing Python: " << e.what() << std::endl;
@@ -32,156 +35,8 @@ void initialize_python() {
     }
 }
 
-// Neue Struktur für Auto-Daten
-CarDetectionData get_car_detection_data() {
-    initialize_python();
-    
-    CarDetectionData result = {0};  // Initialisierung mit Nullen
-    
-    try {
-        py::object data = kamera_module.attr("get_car_detection_data")();
-        py::dict data_dict = data.cast<py::dict>();
-        
-        // Rote Koordinaten (Heck)
-        if (!data_dict["red_coords"].is_none()) {
-            py::list red_list = data_dict["red_coords"].cast<py::list>();
-            result.red_x = red_list[0].cast<int>();
-            result.red_y = red_list[1].cast<int>();
-            result.has_red = true;
-        }
-        
-        // Gelbe Koordinaten (Spitze)
-        if (!data_dict["yellow_coords"].is_none()) {
-            py::list yellow_list = data_dict["yellow_coords"].cast<py::list>();
-            result.yellow_x = yellow_list[0].cast<int>();
-            result.yellow_y = yellow_list[1].cast<int>();
-            result.has_yellow = true;
-        }
-        
-        // Autorichtung in Grad
-        if (!data_dict["car_angle"].is_none()) {
-            result.car_angle = data_dict["car_angle"].cast<float>();
-            result.has_angle = true;
-        }
-        
-        // Abstand zwischen den Punkten
-        if (!data_dict["distance"].is_none()) {
-            result.distance = data_dict["distance"].cast<float>();
-            result.has_distance = true;
-        }
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error getting car detection data: " << e.what() << std::endl;
-        // result bleibt mit Nullwerten und false-Flags
-    }
-    
-    return result;
-}
-
-CarDetectionData get_car_detection_with_display() {
-    initialize_python();
-    
-    CarDetectionData result = {0};  // Initialisierung mit Nullen
-    
-    try {
-        py::object data = kamera_module.attr("get_car_detection_with_display")();
-        py::dict data_dict = data.cast<py::dict>();
-        
-        // Rote Koordinaten (Heck)
-        if (!data_dict["red_coords"].is_none()) {
-            py::list red_list = data_dict["red_coords"].cast<py::list>();
-            result.red_x = red_list[0].cast<int>();
-            result.red_y = red_list[1].cast<int>();
-            result.has_red = true;
-        }
-        
-        // Gelbe Koordinaten (Spitze)
-        if (!data_dict["yellow_coords"].is_none()) {
-            py::list yellow_list = data_dict["yellow_coords"].cast<py::list>();
-            result.yellow_x = yellow_list[0].cast<int>();
-            result.yellow_y = yellow_list[1].cast<int>();
-            result.has_yellow = true;
-        }
-        
-        // Autorichtung in Grad
-        if (!data_dict["car_angle"].is_none()) {
-            result.car_angle = data_dict["car_angle"].cast<float>();
-            result.has_angle = true;
-        }
-        
-        // Abstand zwischen den Punkten
-        if (!data_dict["distance"].is_none()) {
-            result.distance = data_dict["distance"].cast<float>();
-            result.has_distance = true;
-        }
-        
-    } catch (const std::exception& e) {
-        std::cerr << "Error getting car detection data with display: " << e.what() << std::endl;
-        // result bleibt mit Nullwerten und false-Flags
-    }
-    
-    return result;
-}
-
-// Legacy-Funktionen für Kompatibilität
-std::vector<CameraCoordinate> get_camera_coordinates() {
-    initialize_python();
-    
-    try {
-        py::object positions = kamera_module.attr("get_red_object_coordinates")();
-        
-        std::vector<CameraCoordinate> coordinates;
-        py::list position_list = positions.cast<py::list>();
-        
-        for (auto item : position_list) {
-            py::tuple pos = item.cast<py::tuple>();
-            if (pos.size() == 4) {
-                CameraCoordinate coord;
-                coord.x = pos[0].cast<int>();
-                coord.y = pos[1].cast<int>();
-                coord.w = pos[2].cast<int>();
-                coord.h = pos[3].cast<int>();
-                coordinates.push_back(coord);
-            }
-        }
-        
-        return coordinates;
-    } catch (const std::exception&) {
-        return std::vector<CameraCoordinate>();
-    }
-}
-
-std::vector<CameraCoordinate> get_camera_coordinates_with_display() {
-    initialize_python();
-    
-    try {
-        py::object positions = kamera_module.attr("get_red_object_coordinates_with_display")();
-        
-        std::vector<CameraCoordinate> coordinates;
-        py::list position_list = positions.cast<py::list>();
-        
-        for (auto item : position_list) {
-            py::tuple pos = item.cast<py::tuple>();
-            if (pos.size() == 4) {
-                CameraCoordinate coord;
-                coord.x = pos[0].cast<int>();
-                coord.y = pos[1].cast<int>();
-                coord.w = pos[2].cast<int>();
-                coord.h = pos[3].cast<int>();
-                coordinates.push_back(coord);
-            }
-        }
-        
-        return coordinates;
-    } catch (const std::exception&) {
-        return std::vector<CameraCoordinate>();
-    }
-}
-
 // Handle OpenCV window events
 void handle_opencv_events() {
-    if (!module_loaded) return;
-    
     try {
         py::object cv2_module = py::module_::import("cv2");
         cv2_module.attr("waitKey")(1);  // Process OpenCV events
@@ -190,22 +45,113 @@ void handle_opencv_events() {
     }
 }
 
-// Cleanup camera resources
+// Legacy cleanup function (not used)
 void cleanup_camera() {
-    if (!module_loaded) return;
-    
     try {
-        kamera_module.attr("cleanup_camera")();
-        
         py::object cv2_module = py::module_::import("cv2");
         cv2_module.attr("destroyAllWindows")();
     } catch (const std::exception&) {
         // Ignore errors
     }
-    
-    if (guard != nullptr) {
-        delete guard;
-        guard = nullptr;
-        module_loaded = false;
+}
+
+// === Fahrzeugflotte-Funktionen ===
+bool initialize_vehicle_fleet() {
+    try {
+        global_fleet = std::make_unique<VehicleFleet>();
+        
+        // Konfiguriere 4 Fahrzeuge (alle Gelb vorne, verschiedene hintere Farben)
+        global_fleet->add_vehicle("Auto-1", "Gelb", "Rot");      // Gelb vorne, Rot hinten
+        global_fleet->add_vehicle("Auto-2", "Gelb", "Blau");     // Gelb vorne, Blau hinten  
+        global_fleet->add_vehicle("Auto-3", "Gelb", "Grün");     // Gelb vorne, Grün hinten
+        global_fleet->add_vehicle("Auto-4", "Gelb", "Lila");     // Gelb vorne, Lila hinten
+        
+        // Initialisiere Python Multi-Vehicle Detection
+        py::object multi_vehicle_module = py::module_::import("MultiVehicleKamera");
+        py::object init_result = multi_vehicle_module.attr("initialize_multi_vehicle_detection")();
+        
+        if (!init_result.cast<bool>()) {
+            std::cerr << "Fehler: Multi-Vehicle Python-Initialisierung fehlgeschlagen!" << std::endl;
+            return false;
+        }
+        
+        std::cout << "Fahrzeugflotte mit " << global_fleet->get_vehicle_count() << " Fahrzeugen initialisiert!" << std::endl;
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Fehler bei Fahrzeugflotte-Initialisierung: " << e.what() << std::endl;
+        return false;
     }
 }
+
+std::vector<VehicleDetectionData> get_all_vehicle_detections() {
+    std::vector<VehicleDetectionData> results;
+    
+    if (!global_fleet) {
+        std::cerr << "Fahrzeugflotte nicht initialisiert!" << std::endl;
+        return results;
+    }
+    
+    try {
+        py::object multi_vehicle_module = py::module_::import("MultiVehicleKamera");
+        py::object detections = multi_vehicle_module.attr("get_multi_vehicle_detections")();
+        
+        py::list detection_list = detections.cast<py::list>();
+        
+        for (auto item : detection_list) {
+            py::dict detection = item.cast<py::dict>();
+            
+            VehicleDetectionData vehicle_data;
+            vehicle_data.vehicle_name = detection["vehicle_name"].cast<std::string>();
+            vehicle_data.front_color = detection["front_color"].cast<std::string>();
+            vehicle_data.rear_color = detection["rear_color"].cast<std::string>();
+            
+            // Position extrahieren
+            py::tuple front_pos = detection["front_pos"].cast<py::tuple>();
+            vehicle_data.front_pos = Point2D(front_pos[0].cast<float>(), front_pos[1].cast<float>());
+            
+            py::tuple rear_pos = detection["rear_pos"].cast<py::tuple>();
+            vehicle_data.rear_pos = Point2D(rear_pos[0].cast<float>(), rear_pos[1].cast<float>());
+            
+            // Status
+            vehicle_data.has_front = detection["has_front"].cast<bool>();
+            vehicle_data.has_rear = detection["has_rear"].cast<bool>();
+            vehicle_data.has_angle = detection["has_angle"].cast<bool>();
+            
+            // Winkel und Distanz
+            vehicle_data.angle_degrees = detection["angle_degrees"].cast<float>();
+            vehicle_data.distance_pixels = detection["distance_pixels"].cast<float>();
+            
+            results.push_back(vehicle_data);
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Fehler bei Multi-Vehicle Detection: " << e.what() << std::endl;
+    }
+    
+    return results;
+}
+
+void show_fleet_camera_feed() {
+    try {
+        py::object multi_vehicle_module = py::module_::import("MultiVehicleKamera");
+        multi_vehicle_module.attr("show_multi_vehicle_feed")();
+    } catch (const std::exception& e) {
+        std::cerr << "Fehler bei Fleet Camera Feed: " << e.what() << std::endl;
+    }
+}
+
+void cleanup_vehicle_fleet() {
+    try {
+        if (global_fleet) {
+            py::object multi_vehicle_module = py::module_::import("MultiVehicleKamera");
+            multi_vehicle_module.attr("cleanup_multi_vehicle_detection")();
+            global_fleet.reset();
+            std::cout << "Fahrzeugflotte bereinigt" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Fehler bei Fleet Cleanup: " << e.what() << std::endl;
+    }
+}
+
+
