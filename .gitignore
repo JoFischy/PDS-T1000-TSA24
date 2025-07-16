@@ -5,6 +5,10 @@ Release/
 RelWithDebInfo/
 MinSizeRel/
 
+# Platform-specific configuration files (DO NOT COMMIT)
+CMakeLists.txt
+src/py_runner.cpp
+
 # Python cache
 __pycache__/
 *.pyc

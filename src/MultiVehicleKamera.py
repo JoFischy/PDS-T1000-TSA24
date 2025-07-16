@@ -3,38 +3,45 @@ import numpy as np
 import math
 
 class MultiVehicleDetector:
+    """
+    Multi-Vehicle Detection System mit intelligenter Paar-Zuordnung
+    
+    Erkennt 4 Fahrzeuge basierend auf:
+    - Einheitliche ROT-Kopffarbe (alle Fahrzeuge)
+    - Individuelle Identifikator-Farben am Heck (Blau, Grün, Gelb, Lila)
+    """
     def __init__(self):
         self.cap = None
         
-        # Fahrzeug-Konfigurationen: Alle haben GELB vorne, nur hintere Farbe unterschiedlich
+        # Fahrzeug-Konfigurationen: ROT-Kopf + individuelle Heck-Identifikatoren
         self.vehicles = [
             {
                 'name': 'Auto-1',
-                'front_color': 'Gelb',
-                'front_hsv': ([20, 100, 100], [30, 255, 255]),  # Gelb (einheitlich)
-                'rear_color': 'Rot', 
-                'rear_hsv': ([0, 120, 70], [10, 255, 255])       # Rot
+                'front_color': 'Rot',
+                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'rear_color': 'Blau', 
+                'rear_hsv': ([100, 150, 50], [130, 255, 255])    # Blau-Identifikator
             },
             {
                 'name': 'Auto-2', 
-                'front_color': 'Gelb',
-                'front_hsv': ([20, 100, 100], [30, 255, 255]),  # Gelb (einheitlich)
-                'rear_color': 'Blau',
-                'rear_hsv': ([100, 150, 50], [130, 255, 255])    # Blau
+                'front_color': 'Rot',
+                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'rear_color': 'Grün',
+                'rear_hsv': ([40, 100, 100], [80, 255, 255])     # Grün-Identifikator
             },
             {
                 'name': 'Auto-3',
-                'front_color': 'Gelb', 
-                'front_hsv': ([20, 100, 100], [30, 255, 255]),  # Gelb (einheitlich)
-                'rear_color': 'Grün',
-                'rear_hsv': ([40, 100, 100], [80, 255, 255])     # Grün
+                'front_color': 'Rot', 
+                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'rear_color': 'Gelb',
+                'rear_hsv': ([20, 100, 100], [30, 255, 255])     # Gelb-Identifikator
             },
             {
                 'name': 'Auto-4',
-                'front_color': 'Gelb',
-                'front_hsv': ([20, 100, 100], [30, 255, 255]),  # Gelb (einheitlich)
+                'front_color': 'Rot',
+                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
                 'rear_color': 'Lila', 
-                'rear_hsv': ([130, 50, 50], [160, 255, 255])     # Lila
+                'rear_hsv': ([130, 50, 50], [160, 255, 255])     # Lila-Identifikator
             }
         ]
     
@@ -65,10 +72,15 @@ class MultiVehicleDetector:
             print("Multi-Vehicle Kamera bereinigt")
     
     def find_all_colors(self, hsv_frame):
-        """Findet alle gelben (vorne) und hinteren Farben im Bild"""
+        """
+        Findet alle roten Kopf-Punkte und Identifikator-Farben im Bild
+        
+        Returns:
+            tuple: (red_positions, rear_colors_dict)
+        """
         try:
-            # Alle gelben Punkte finden (vordere Farbe - einheitlich)
-            yellow_positions = self.find_all_color_centers(hsv_frame, [20, 100, 100], [30, 255, 255])
+            # Alle roten Punkte finden (vordere Farbe - einheitlich)
+            red_positions = self.find_all_color_centers(hsv_frame, [0, 120, 70], [10, 255, 255])
             
             # Alle hinteren Farben finden
             rear_colors = {}
@@ -78,7 +90,7 @@ class MultiVehicleDetector:
                 if rear_positions:
                     rear_colors[rear_name] = rear_positions
             
-            return yellow_positions, rear_colors
+            return red_positions, rear_colors
             
         except Exception as e:
             print(f"Fehler bei Farberkennung: {e}")
@@ -115,8 +127,20 @@ class MultiVehicleDetector:
             print(f"Fehler bei Multi-Farberkennung: {e}")
             return []
     
-    def assign_closest_pairs(self, yellow_positions, rear_colors):
-        """Ordnet gelbe Punkte den nächstgelegenen hinteren Farben zu"""
+    def assign_closest_pairs(self, red_positions, rear_colors):
+        """
+        Intelligente Paar-Zuordnung basierend auf minimaler Distanz
+        
+        Ordnet jeden roten Punkt (Kopf) dem nächstgelegenen Identifikator zu.
+        Verhindert Doppel-Zuordnungen durch Used-Set Algorithmus.
+        
+        Args:
+            red_positions: Liste der erkannten roten Punkte
+            rear_colors: Dict mit Identifikator-Farben und deren Positionen
+            
+        Returns:
+            dict: Zuordnungen pro Fahrzeug mit Positionen und Distanzen
+        """
         try:
             # Reset alle Fahrzeuge
             vehicle_assignments = {}
@@ -129,8 +153,8 @@ class MultiVehicleDetector:
                     'distance': float('inf')
                 }
             
-            # Für jede hintere Farbe, finde das nächste gelbe
-            used_yellows = set()
+            # Für jede hintere Farbe, finde das nächste rote
+            used_reds = set()
             
             for vehicle in self.vehicles:
                 rear_color = vehicle['rear_color']
@@ -142,14 +166,14 @@ class MultiVehicleDetector:
                     
                     # Für jeden hinteren Punkt dieser Farbe
                     for rear_pos in rear_colors[rear_color]:
-                        # Finde das nächste gelbe, das noch nicht verwendet wurde
-                        for yellow_pos in yellow_positions:
-                            if yellow_pos not in used_yellows:
-                                distance = math.sqrt((yellow_pos[0] - rear_pos[0])**2 + 
-                                                   (yellow_pos[1] - rear_pos[1])**2)
+                        # Finde das nächste rote, das noch nicht verwendet wurde
+                        for red_pos in red_positions:
+                            if red_pos not in used_reds:
+                                distance = math.sqrt((red_pos[0] - rear_pos[0])**2 + 
+                                                   (red_pos[1] - rear_pos[1])**2)
                                 if distance < min_distance:
                                     min_distance = distance
-                                    best_pair = (yellow_pos, rear_pos)
+                                    best_pair = (red_pos, rear_pos)
                     
                     # Zuordnung speichern wenn gefunden
                     if best_pair and min_distance < 200:  # Max 200 Pixel Abstand
@@ -160,7 +184,7 @@ class MultiVehicleDetector:
                             'has_rear': True,
                             'distance': min_distance
                         }
-                        used_yellows.add(best_pair[0])
+                        used_reds.add(best_pair[0])
             
             return vehicle_assignments
             
@@ -203,12 +227,12 @@ class MultiVehicleDetector:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             
             # Alle Farben finden
-            yellow_positions, rear_colors = self.find_all_colors(hsv)
+            red_positions, rear_colors = self.find_all_colors(hsv)
             
             # Intelligente Zuordnung der nächsten Paare
-            assignments = self.assign_closest_pairs(yellow_positions, rear_colors)
+            assignments = self.assign_closest_pairs(red_positions, rear_colors)
             
-            # Ergebnisse im vereinfachten Format
+            # Ergebnisse formatieren
             detections = []
             for vehicle in self.vehicles:
                 vehicle_name = vehicle['name']
@@ -217,28 +241,24 @@ class MultiVehicleDetector:
                     'has_front': False, 'has_rear': False, 'distance': 0
                 })
                 
-                # Vereinfachte Struktur: Nur Hauptposition + Distanz
                 detection = {
-                    'position': {'x': 0.0, 'y': 0.0},
-                    'detected': False,
-                    'angle': 0.0,
-                    'distance': 0.0,
-                    'rear_color': vehicle['rear_color']
+                    'vehicle_name': vehicle_name,
+                    'front_color': vehicle['front_color'],
+                    'rear_color': vehicle['rear_color'],
+                    'front_pos': (float(assignment['front_pos'][0]), float(assignment['front_pos'][1])),
+                    'rear_pos': (float(assignment['rear_pos'][0]), float(assignment['rear_pos'][1])),
+                    'has_front': assignment['has_front'],
+                    'has_rear': assignment['has_rear'],
+                    'has_angle': False,
+                    'angle_degrees': 0.0,
+                    'distance_pixels': assignment.get('distance', 0.0)
                 }
                 
-                # Berechne Hauptposition und Daten wenn beide Farben erkannt
+                # Berechne Richtung wenn beide Farben erkannt
                 if assignment['has_front'] and assignment['has_rear']:
-                    front_pos = assignment['front_pos']
-                    rear_pos = assignment['rear_pos']
-                    
-                    # Hauptposition = Schwerpunkt zwischen Front und Heck
-                    center_x = (front_pos[0] + rear_pos[0]) / 2.0
-                    center_y = (front_pos[1] + rear_pos[1]) / 2.0
-                    
-                    detection['position'] = {'x': center_x, 'y': center_y}
-                    detection['detected'] = True
-                    detection['angle'] = self.calculate_angle(front_pos, rear_pos)
-                    detection['distance'] = assignment['distance']
+                    detection['angle_degrees'] = self.calculate_angle(assignment['front_pos'], assignment['rear_pos'])
+                    detection['distance_pixels'] = assignment['distance']
+                    detection['has_angle'] = True
                 
                 detections.append(detection)
             
@@ -262,68 +282,127 @@ class MultiVehicleDetector:
             # Erkenne alle Fahrzeuge mit intelligenter Zuordnung
             detections = self.detect_all_vehicles()
             
+            # MARKIERE ALLE ERKANNTEN FARBPUNKTE (für Debugging)
+            self.draw_all_detected_points(frame)
+            
             # Zähle erkannte Fahrzeuge
-            detected_count = sum(1 for d in detections if d['detected'])
+            detected_count = sum(1 for d in detections if d['has_angle'])
             
             # Header-Info
-            cv2.putText(frame, f"EINHEITLICHE VORDERE FARBE: GELB", (10, 25), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, f"EINHEITLICHE VORDERE FARBE: ROT", (10, 25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
             cv2.putText(frame, f"Erkannt: {detected_count}/4 Autos", (10, 50), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # Zeichne Erkennungen
             for i, detection in enumerate(detections):
-                vehicle_name = f"Auto-{i+1}"
                 # Fahrzeugname und Status (rechts)
-                status_text = f"{vehicle_name}: "
-                if detection['detected']:
-                    status_text += f"{int(detection['angle'])}° - {detection['rear_color']}"
+                status_text = f"{detection['vehicle_name']}: "
+                if detection['has_angle']:
+                    status_text += f"{int(detection['angle_degrees'])}° - {detection['rear_color']}"
                 else:
                     status_text += f"Nicht erkannt - {detection['rear_color']}"
                 
                 cv2.putText(frame, status_text, (frame.shape[1] - 300, 30 + i * 25), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 
-                # Zeichne erkanntes Fahrzeug (vereinfachte Darstellung)
-                if detection['detected']:
-                    # Hauptposition als großer Kreis
-                    center_x = int(detection['position']['x'])
-                    center_y = int(detection['position']['y'])
+                # Zeichne erkannte Punkte
+                if detection['has_front']:
+                    cv2.circle(frame, (int(detection['front_pos'][0]), int(detection['front_pos'][1])), 
+                              8, (0, 0, 255), 3)  # Rot für vorne (einheitlich)
+                    cv2.putText(frame, "ROT", (int(detection['front_pos'][0]) + 12, int(detection['front_pos'][1]) - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+                
+                if detection['has_rear']:
+                    # Farbe je nach Fahrzeug
+                    if detection['rear_color'] == 'Rot':
+                        color = (0, 0, 255)
+                    elif detection['rear_color'] == 'Blau':
+                        color = (255, 0, 0)
+                    elif detection['rear_color'] == 'Grün':
+                        color = (0, 255, 0)
+                    elif detection['rear_color'] == 'Lila':
+                        color = (255, 0, 255)
+                    else:
+                        color = (128, 128, 128)
                     
-                    # Fahrzeug-spezifische Farbe
-                    if i == 0: vehicle_color = (0, 0, 255)      # Rot für Auto-1
-                    elif i == 1: vehicle_color = (255, 0, 0)    # Blau für Auto-2
-                    elif i == 2: vehicle_color = (0, 255, 0)    # Grün für Auto-3
-                    else: vehicle_color = (255, 0, 255)         # Lila für Auto-4
+                    cv2.circle(frame, (int(detection['rear_pos'][0]), int(detection['rear_pos'][1])), 
+                              8, color, 3)
+                    cv2.putText(frame, detection['rear_color'], 
+                               (int(detection['rear_pos'][0]) + 12, int(detection['rear_pos'][1]) - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                
+                # Zeichne Verbindungslinie und Richtungspfeil
+                if detection['has_angle']:
+                    front_pt = (int(detection['front_pos'][0]), int(detection['front_pos'][1]))
+                    rear_pt = (int(detection['rear_pos'][0]), int(detection['rear_pos'][1]))
                     
-                    # Hauptkreis
-                    cv2.circle(frame, (center_x, center_y), 12, vehicle_color, 3)
-                    cv2.putText(frame, vehicle_name, (center_x + 15, center_y - 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, vehicle_color, 2)
+                    # Fahrzeug-spezifische Farbe für Linie
+                    if i == 0: line_color = (255, 255, 0)      # Cyan für Auto-1
+                    elif i == 1: line_color = (255, 128, 0)    # Orange für Auto-2
+                    elif i == 2: line_color = (128, 255, 0)    # Hellgrün für Auto-3
+                    else: line_color = (255, 0, 128)           # Pink für Auto-4
+                    
+                    cv2.line(frame, rear_pt, front_pt, line_color, 2)
                     
                     # Richtungspfeil
-                    import math
-                    angle_rad = math.radians(detection['angle'])
-                    arrow_length = 20
+                    angle_rad = math.radians(detection['angle_degrees'])
                     arrow_end = (
-                        int(center_x + arrow_length * math.cos(angle_rad)),
-                        int(center_y + arrow_length * math.sin(angle_rad))
+                        int(front_pt[0] + 15 * math.sin(angle_rad)),
+                        int(front_pt[1] - 15 * math.cos(angle_rad))
                     )
-                    cv2.arrowedLine(frame, (center_x, center_y), arrow_end, vehicle_color, 3)
+                    cv2.arrowedLine(frame, front_pt, arrow_end, line_color, 2)
                     
-                    # Distanz anzeigen
-                    dist_text = f"{detection['distance']:.0f}px"
-                    cv2.putText(frame, dist_text, (center_x - 10, center_y + 25), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, vehicle_color, 1)
+                    # Abstand anzeigen
+                    mid_x = (front_pt[0] + rear_pt[0]) // 2
+                    mid_y = (front_pt[1] + rear_pt[1]) // 2
+                    cv2.putText(frame, f"{detection['distance_pixels']:.0f}px", 
+                               (mid_x + 5, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, line_color, 1)
             
             # Anweisungen
-            cv2.putText(frame, "ESC = Beenden | Vereinfachte Hauptposition + Distanz", 
+            cv2.putText(frame, "ESC = Beenden | Intelligente Paar-Zuordnung aktiv", 
                        (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
             
-            cv2.imshow("Multi-Vehicle Detection - Vereinfachte Darstellung", frame)
+            cv2.imshow("Multi-Vehicle Detection - Einheitlich Rot Vorne", frame)
             
         except Exception as e:
             print(f"Fehler bei intelligentem Kamera-Feed: {e}")
+    
+    def draw_all_detected_points(self, frame):
+        """Markiert ALLE erkannten Farbpunkte im Bild zur Debugging-Zwecken"""
+        try:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            
+            # Erkenne alle roten Punkte (Kopffarbe)
+            red_positions = self.find_all_color_centers(hsv, [0, 120, 70], [10, 255, 255])
+            for pos in red_positions:
+                cv2.circle(frame, pos, 6, (0, 0, 255), 2)  # Rot für Kopf
+                cv2.putText(frame, "R", (pos[0] + 8, pos[1] - 8), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
+            
+            # Erkenne alle Identifikator-Farben
+            color_map = {
+                'Blau': ([100, 150, 50], [130, 255, 255], (255, 0, 0)),
+                'Grün': ([40, 100, 100], [80, 255, 255], (0, 255, 0)),
+                'Gelb': ([20, 100, 100], [30, 255, 255], (0, 255, 255)),
+                'Lila': ([130, 50, 50], [160, 255, 255], (255, 0, 255))
+            }
+            
+            for color_name, (lower, upper, draw_color) in color_map.items():
+                positions = self.find_all_color_centers(hsv, lower, upper)
+                for pos in positions:
+                    cv2.circle(frame, pos, 6, draw_color, 2)
+                    cv2.putText(frame, color_name[0], (pos[0] + 8, pos[1] - 8), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.3, draw_color, 1)
+            
+            # Info-Text
+            total_points = len(red_positions) + sum(len(self.find_all_color_centers(hsv, lower, upper)) 
+                                                   for _, (lower, upper, _) in color_map.items())
+            cv2.putText(frame, f"Alle Punkte: {total_points} erkannt", (10, 75), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+        except Exception as e:
+            print(f"Fehler beim Markieren aller Punkte: {e}")
 
 # Globale Instanz für C++ Interface
 global_detector = None
@@ -362,48 +441,3 @@ def cleanup_multi_vehicle_detection():
     if global_detector is not None:
         global_detector.cleanup_camera()
         global_detector = None
-
-# === C++ Bridge Functions ===
-def initialize_4_vehicle_fleet():
-    """Initialisiert die 4-Fahrzeug-Flotte für C++ Bridge"""
-    global global_detector
-    global_detector = MultiVehicleDetector()
-    if global_detector.initialize_camera():
-        print("4-Fahrzeug-Flotte erfolgreich initialisiert")
-        return True
-    else:
-        print("Fehler bei der Kamera-Initialisierung")
-        return False
-
-def detect_all_vehicles():
-    """Gibt Erkennungsdaten für alle 4 Fahrzeuge zurück (für C++ Bridge)"""
-    global global_detector
-    if global_detector is None:
-        return []
-    
-    detection_data = global_detector.detect_all_vehicles()
-    
-    # Konvertiere in Format das C++ erwartet
-    result = []
-    for i, detection in enumerate(detection_data):
-        vehicle_data = {
-            'position': {
-                'x': detection['position']['x'] if detection['detected'] else 0.0,
-                'y': detection['position']['y'] if detection['detected'] else 0.0
-            },
-            'detected': detection['detected'],
-            'angle': detection['angle'],
-            'distance': detection['distance'],
-            'rear_color': detection['rear_color'].lower()
-        }
-        result.append(vehicle_data)
-    
-    return result
-
-def show_camera_with_fleet_detection():
-    """Zeigt Kamera-Feed mit Flotten-Erkennung (für C++ Bridge)"""
-    show_multi_vehicle_feed()
-
-def cleanup_resources():
-    """Bereinigt Ressourcen (für C++ Bridge)"""
-    cleanup_multi_vehicle_detection()
