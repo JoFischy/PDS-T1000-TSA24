@@ -7,39 +7,43 @@ class MultiVehicleDetector:
     Multi-Vehicle Detection System mit intelligenter Paar-Zuordnung
     
     Erkennt 4 Fahrzeuge basierend auf:
-    - Einheitliche ROT-Kopffarbe (alle Fahrzeuge)
+    - Einheitliche ORANGE-Kopffarbe (alle Fahrzeuge)
     - Individuelle Identifikator-Farben am Heck (Blau, Grün, Gelb, Lila)
     """
     def __init__(self):
         self.cap = None
         
-        # Fahrzeug-Konfigurationen: ROT-Kopf + individuelle Heck-Identifikatoren
+        # Mindestgröße für Farberkennung (in Pixeln)
+        self.MIN_FRONT_AREA = 100   # Orange-Bereiche müssen mindestens 100 Pixel groß sein
+        self.MIN_REAR_AREA = 80     # Heck-Farben müssen mindestens 80 Pixel groß sein
+        
+        # Fahrzeug-Konfigurationen: ORANGE-Kopf + individuelle Heck-Identifikatoren
         self.vehicles = [
             {
                 'name': 'Auto-1',
-                'front_color': 'Rot',
-                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'front_color': 'Orange',
+                'front_hsv': ([5, 150, 150], [15, 255, 255]),     # Orange (einheitlich)
                 'rear_color': 'Blau', 
                 'rear_hsv': ([100, 150, 50], [130, 255, 255])    # Blau-Identifikator
             },
             {
                 'name': 'Auto-2', 
-                'front_color': 'Rot',
-                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'front_color': 'Orange',
+                'front_hsv': ([5, 150, 150], [15, 255, 255]),     # Orange (einheitlich)
                 'rear_color': 'Grün',
                 'rear_hsv': ([40, 100, 100], [80, 255, 255])     # Grün-Identifikator
             },
             {
                 'name': 'Auto-3',
-                'front_color': 'Rot', 
-                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'front_color': 'Orange', 
+                'front_hsv': ([5, 150, 150], [15, 255, 255]),     # Orange (einheitlich)
                 'rear_color': 'Gelb',
                 'rear_hsv': ([20, 100, 100], [30, 255, 255])     # Gelb-Identifikator
             },
             {
                 'name': 'Auto-4',
-                'front_color': 'Rot',
-                'front_hsv': ([0, 120, 70], [10, 255, 255]),     # Rot (einheitlich)
+                'front_color': 'Orange',
+                'front_hsv': ([5, 150, 150], [15, 255, 255]),     # Orange (einheitlich)
                 'rear_color': 'Lila', 
                 'rear_hsv': ([130, 50, 50], [160, 255, 255])     # Lila-Identifikator
             }
@@ -48,56 +52,71 @@ class MultiVehicleDetector:
     def initialize_camera(self):
         """Initialisiert die Kamera"""
         try:
-            self.cap = cv2.VideoCapture(0)
-            if not self.cap.isOpened():
-                print("Fehler: Kamera konnte nicht geöffnet werden!")
-                return False
+            # Versuche verschiedene Kamera-Indizes
+            for camera_index in [0, 1, 2]:
+                print(f"Versuche Kamera-Index {camera_index}...")
+                self.cap = cv2.VideoCapture(camera_index)
+                
+                if self.cap.isOpened():
+                    # Teste ob ein Frame gelesen werden kann
+                    ret, frame = self.cap.read()
+                    if ret and frame is not None:
+                        print(f"Kamera erfolgreich initialisiert (Index: {camera_index})")
+                        # Setze Kamera-Eigenschaften für bessere Performance
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        self.cap.set(cv2.CAP_PROP_FPS, 30)
+                        return True
+                    else:
+                        self.cap.release()
+                        self.cap = None
+                else:
+                    self.cap = None
             
-            # Kamera-Einstellungen
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
+            print("Keine funktionierende Kamera gefunden!")
+            return False
             
-            print("Multi-Vehicle Kamera initialisiert")
-            return True
         except Exception as e:
             print(f"Kamera-Initialisierung fehlgeschlagen: {e}")
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
             return False
     
     def cleanup_camera(self):
-        """Kamera-Ressourcen freigeben"""
+        """Bereinigt Ressourcen"""
         if self.cap is not None:
             self.cap.release()
             cv2.destroyAllWindows()
-            print("Multi-Vehicle Kamera bereinigt")
+        print("Multi-Vehicle Detection System bereinigt")
     
     def find_all_colors(self, hsv_frame):
         """
-        Findet alle roten Kopf-Punkte und Identifikator-Farben im Bild
+        Findet alle orange Kopf-Punkte und Identifikator-Farben im Bild
         
         Returns:
-            tuple: (red_positions, rear_colors_dict)
+            tuple: (front_positions, rear_colors_dict)
         """
         try:
-            # Alle roten Punkte finden (vordere Farbe - einheitlich)
-            red_positions = self.find_all_color_centers(hsv_frame, [0, 120, 70], [10, 255, 255])
+            # Alle orange Punkte finden (vordere Farbe - einheitlich)
+            front_positions = self.find_all_color_centers(hsv_frame, [5, 150, 150], [15, 255, 255], is_front_color=True)
             
             # Alle hinteren Farben finden
             rear_colors = {}
             for vehicle in self.vehicles:
                 rear_name = vehicle['rear_color']
-                rear_positions = self.find_all_color_centers(hsv_frame, vehicle['rear_hsv'][0], vehicle['rear_hsv'][1])
+                rear_positions = self.find_all_color_centers(hsv_frame, vehicle['rear_hsv'][0], vehicle['rear_hsv'][1], is_front_color=False)
                 if rear_positions:
                     rear_colors[rear_name] = rear_positions
             
-            return red_positions, rear_colors
+            return front_positions, rear_colors
             
         except Exception as e:
             print(f"Fehler bei Farberkennung: {e}")
             return [], {}
     
-    def find_all_color_centers(self, hsv_frame, lower_hsv, upper_hsv):
-        """Findet alle Zentren einer bestimmten Farbe im HSV-Bild"""
+    def find_all_color_centers(self, hsv_frame, lower_hsv, upper_hsv, is_front_color=False):
+        """Findet alle Zentren einer bestimmten Farbe im HSV-Bild mit konfigurierbarer Mindestgröße"""
         try:
             # HSV-Bereich anwenden
             mask = cv2.inRange(hsv_frame, np.array(lower_hsv), np.array(upper_hsv))
@@ -110,32 +129,40 @@ class MultiVehicleDetector:
             # Konturen finden
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
+            # Wähle Mindestgröße basierend auf Farb-Typ
+            min_area = self.MIN_FRONT_AREA if is_front_color else self.MIN_REAR_AREA
+            
             positions = []
             for contour in contours:
                 area = cv2.contourArea(contour)
-                # Mindestgröße prüfen
-                if area > 50:
+                # Mindestgröße prüfen (konfigurierbar)
+                if area > min_area:
                     # Schwerpunkt berechnen
                     M = cv2.moments(contour)
                     if M["m00"] != 0:
                         cx = int(M["m10"] / M["m00"])
                         cy = int(M["m01"] / M["m00"])
                         positions.append((cx, cy))
+                        
+                        # Debug-Info für große Bereiche
+                        if area > min_area * 2:
+                            color_type = "FRONT" if is_front_color else "REAR"
+                            print(f"Große {color_type}-Farbe erkannt: {area:.0f} Pixel bei ({cx}, {cy})")
             
             return positions
         except Exception as e:
             print(f"Fehler bei Multi-Farberkennung: {e}")
             return []
     
-    def assign_closest_pairs(self, red_positions, rear_colors):
+    def assign_closest_pairs(self, front_positions, rear_colors):
         """
         Intelligente Paar-Zuordnung basierend auf minimaler Distanz
         
-        Ordnet jeden roten Punkt (Kopf) dem nächstgelegenen Identifikator zu.
+        Ordnet jeden orangen Punkt (Kopf) dem nächstgelegenen Identifikator zu.
         Verhindert Doppel-Zuordnungen durch Used-Set Algorithmus.
         
         Args:
-            red_positions: Liste der erkannten roten Punkte
+            front_positions: Liste der erkannten orangen Punkte
             rear_colors: Dict mit Identifikator-Farben und deren Positionen
             
         Returns:
@@ -153,8 +180,8 @@ class MultiVehicleDetector:
                     'distance': float('inf')
                 }
             
-            # Für jede hintere Farbe, finde das nächste rote
-            used_reds = set()
+            # Für jede hintere Farbe, finde den nächsten orangen Punkt
+            used_fronts = set()
             
             for vehicle in self.vehicles:
                 rear_color = vehicle['rear_color']
@@ -166,14 +193,14 @@ class MultiVehicleDetector:
                     
                     # Für jeden hinteren Punkt dieser Farbe
                     for rear_pos in rear_colors[rear_color]:
-                        # Finde das nächste rote, das noch nicht verwendet wurde
-                        for red_pos in red_positions:
-                            if red_pos not in used_reds:
-                                distance = math.sqrt((red_pos[0] - rear_pos[0])**2 + 
-                                                   (red_pos[1] - rear_pos[1])**2)
+                        # Finde das nächste orange, das noch nicht verwendet wurde
+                        for front_pos in front_positions:
+                            if front_pos not in used_fronts:
+                                distance = math.sqrt((front_pos[0] - rear_pos[0])**2 + 
+                                                   (front_pos[1] - rear_pos[1])**2)
                                 if distance < min_distance:
                                     min_distance = distance
-                                    best_pair = (red_pos, rear_pos)
+                                    best_pair = (front_pos, rear_pos)
                     
                     # Zuordnung speichern wenn gefunden
                     if best_pair and min_distance < 200:  # Max 200 Pixel Abstand
@@ -184,7 +211,7 @@ class MultiVehicleDetector:
                             'has_rear': True,
                             'distance': min_distance
                         }
-                        used_reds.add(best_pair[0])
+                        used_fronts.add(best_pair[0])
             
             return vehicle_assignments
             
@@ -211,26 +238,30 @@ class MultiVehicleDetector:
             print(f"Fehler bei Winkelberechnung: {e}")
             return 0.0
     
-    def detect_all_vehicles(self):
+    def detect_all_vehicles(self, input_frame=None):
         """Erkennt alle konfigurierten Fahrzeuge mit intelligenter Paar-Zuordnung"""
-        if self.cap is None:
-            print("Kamera nicht initialisiert!")
+        if input_frame is None and self.cap is None:
+            print("Kein Eingabebild und keine Kamera verfügbar!")
             return []
         
         try:
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                print("Kein Kamerabild empfangen!")
-                return []
+            # Verwende Eingabebild oder Kamera
+            if input_frame is not None:
+                frame = input_frame
+            else:
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    print("Kein Kamerabild empfangen!")
+                    return []
             
             # HSV-Konvertierung
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             
             # Alle Farben finden
-            red_positions, rear_colors = self.find_all_colors(hsv)
+            front_positions, rear_colors = self.find_all_colors(hsv)
             
             # Intelligente Zuordnung der nächsten Paare
-            assignments = self.assign_closest_pairs(red_positions, rear_colors)
+            assignments = self.assign_closest_pairs(front_positions, rear_colors)
             
             # Ergebnisse formatieren
             detections = []
@@ -268,19 +299,23 @@ class MultiVehicleDetector:
             print(f"Fehler bei intelligenter Fahrzeugerkennung: {e}")
             return []
     
-    def show_camera_feed_with_detections(self):
-        """Zeigt Kamera-Feed mit allen intelligenten Fahrzeugerkennungen"""
-        if self.cap is None:
-            print("Kamera nicht initialisiert!")
+    def show_camera_feed_with_detections(self, input_frame=None):
+        """Zeigt Kamera-Feed mit allen intelligenten Fahrzeugerkennungen (optional mit Eingabebild)"""
+        if input_frame is None and self.cap is None:
+            print("Kein Eingabebild und keine Kamera verfügbar!")
             return
         
         try:
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                return
+            # Verwende Eingabebild oder Kamera
+            if input_frame is not None:
+                frame = input_frame
+            else:
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    return
             
             # Erkenne alle Fahrzeuge mit intelligenter Zuordnung
-            detections = self.detect_all_vehicles()
+            detections = self.detect_all_vehicles(frame)
             
             # MARKIERE ALLE ERKANNTEN FARBPUNKTE (für Debugging)
             self.draw_all_detected_points(frame)
@@ -289,8 +324,8 @@ class MultiVehicleDetector:
             detected_count = sum(1 for d in detections if d['has_angle'])
             
             # Header-Info
-            cv2.putText(frame, f"EINHEITLICHE VORDERE FARBE: ROT", (10, 25), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.putText(frame, f"EINHEITLICHE VORDERE FARBE: ORANGE", (10, 25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
             cv2.putText(frame, f"Erkannt: {detected_count}/4 Autos", (10, 50), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
@@ -309,9 +344,9 @@ class MultiVehicleDetector:
                 # Zeichne erkannte Punkte
                 if detection['has_front']:
                     cv2.circle(frame, (int(detection['front_pos'][0]), int(detection['front_pos'][1])), 
-                              8, (0, 0, 255), 3)  # Rot für vorne (einheitlich)
-                    cv2.putText(frame, "ROT", (int(detection['front_pos'][0]) + 12, int(detection['front_pos'][1]) - 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+                              8, (0, 165, 255), 3)  # Orange für vorne (einheitlich)
+                    cv2.putText(frame, "ORANGE", (int(detection['front_pos'][0]) + 12, int(detection['front_pos'][1]) - 5), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
                 
                 if detection['has_rear']:
                     # Farbe je nach Fahrzeug
@@ -373,12 +408,12 @@ class MultiVehicleDetector:
         try:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             
-            # Erkenne alle roten Punkte (Kopffarbe)
-            red_positions = self.find_all_color_centers(hsv, [0, 120, 70], [10, 255, 255])
-            for pos in red_positions:
-                cv2.circle(frame, pos, 6, (0, 0, 255), 2)  # Rot für Kopf
-                cv2.putText(frame, "R", (pos[0] + 8, pos[1] - 8), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
+            # Erkenne alle orangen Punkte (Kopffarbe)
+            front_positions = self.find_all_color_centers(hsv, [5, 150, 150], [15, 255, 255], is_front_color=True)
+            for pos in front_positions:
+                cv2.circle(frame, pos, 6, (0, 165, 255), 2)  # Orange für Kopf
+                cv2.putText(frame, "O", (pos[0] + 8, pos[1] - 8), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 165, 255), 1)
             
             # Erkenne alle Identifikator-Farben
             color_map = {
@@ -396,7 +431,7 @@ class MultiVehicleDetector:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, draw_color, 1)
             
             # Info-Text
-            total_points = len(red_positions) + sum(len(self.find_all_color_centers(hsv, lower, upper)) 
+            total_points = len(front_positions) + sum(len(self.find_all_color_centers(hsv, lower, upper, is_front_color=False)) 
                                                    for _, (lower, upper, _) in color_map.items())
             cv2.putText(frame, f"Alle Punkte: {total_points} erkannt", (10, 75), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)

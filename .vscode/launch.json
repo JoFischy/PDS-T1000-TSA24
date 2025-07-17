@@ -2,24 +2,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Camera Detection",
+            "name": "Launch Camera Detection",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/Debug/camera_detection.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}/build/Debug",
+            "cwd": "${workspaceFolder}",
             "environment": [],
             "console": "externalTerminal",
-            "preLaunchTask": "CMake: build"
-        },
-        {
-            "name": "Debug Python Only",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/src/Kamera.py",
-            "console": "integratedTerminal",
-            "cwd": "${workspaceFolder}/src"
+            "preLaunchTask": "build"
         }
     ]
 }
