@@ -21,33 +21,33 @@ class MultiVehicleDetector:
         self.stable_detection_area = None  # Wird beim ersten Mal gesetzt und bleibt fix
         
         # Fahrzeug-Konfigurationen: ORANGE-Kopf + individuelle Heck-Identifikatoren
-        # ERWEITERTE HSV-Bereiche für weiße Beleuchtung (hellere Toleranz)
+        # ANGEPASSTE HSV-Bereiche basierend auf echten Farbwerten
         self.vehicles = [
             {
                 'name': 'Auto-1',
                 'front_color': 'Orange',
-                'front_hsv': ([5, 80, 100], [20, 255, 255]),      # Orange erweitert (heller)
+                'front_hsv': ([8, 180, 220], [18, 255, 255]),      # Orange: H:13±5, S:205±25, V:250+
                 'rear_color': 'Blau', 
                 'rear_hsv': ([100, 80, 30], [130, 255, 255])     # Blau erweitert (heller)
             },
             {
                 'name': 'Auto-2', 
                 'front_color': 'Orange',
-                'front_hsv': ([5, 80, 100], [20, 255, 255]),      # Orange erweitert (heller)
+                'front_hsv': ([8, 180, 220], [18, 255, 255]),      # Orange: H:13±5, S:205±25, V:250+
                 'rear_color': 'Grün',
                 'rear_hsv': ([40, 60, 50], [80, 255, 255])       # Grün erweitert (heller)
             },
             {
                 'name': 'Auto-3',
                 'front_color': 'Orange', 
-                'front_hsv': ([5, 80, 100], [20, 255, 255]),      # Orange erweitert (heller)
+                'front_hsv': ([8, 180, 220], [18, 255, 255]),      # Orange: H:13±5, S:205±25, V:250+
                 'rear_color': 'Gelb',
-                'rear_hsv': ([20, 60, 80], [35, 255, 255])       # Gelb erweitert (heller)
+                'rear_hsv': ([25, 80, 180], [35, 255, 255])       # Gelb: NICHT H:95 (falsches Gelb ausschließen)
             },
             {
                 'name': 'Auto-4',
                 'front_color': 'Orange',
-                'front_hsv': ([5, 80, 100], [20, 255, 255]),      # Orange erweitert (heller)
+                'front_hsv': ([8, 180, 220], [18, 255, 255]),      # Orange: H:13±5, S:205±25, V:250+
                 'rear_color': 'Lila', 
                 'rear_hsv': ([130, 40, 40], [165, 255, 255])     # Lila erweitert (heller)
             }
@@ -123,8 +123,8 @@ class MultiVehicleDetector:
             tuple: (front_positions, rear_colors_dict)
         """
         try:
-            # Alle orange Punkte finden (vordere Farbe - einheitlich) - ERWEITERT für helle Beleuchtung
-            front_positions = self.find_all_color_centers(hsv_frame, [5, 80, 100], [20, 255, 255], is_front_color=True)
+            # Alle orange Punkte finden (vordere Farbe - einheitlich) - ANGEPASST auf echte Orange-Werte
+            front_positions = self.find_all_color_centers(hsv_frame, [8, 180, 220], [18, 255, 255], is_front_color=True)
             
             # Alle hinteren Farben finden
             rear_colors = {}
@@ -568,6 +568,10 @@ class MultiVehicleDetector:
                 cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3)
                 cv2.putText(frame, "STABILER ERKENNUNGSBEREICH", (x_min + 5, y_min - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                
+                # NEUE FUNKTION: Erkenne Farben vor weißem Hintergrund im Erkennungsbereich
+                self.detect_colors_in_detection_area(frame)
+                
             else:
                 # Fallback-Info
                 cv2.putText(frame, "KEINE ECKPUNKTE ERKANNT - VOLLBILD MODUS", (10, 30), 
@@ -662,6 +666,124 @@ class MultiVehicleDetector:
         except Exception as e:
             print(f"Fehler bei intelligentem Kamera-Feed: {e}")
     
+    def detect_colors_in_detection_area(self, frame):
+        """Erkennt alle Farben vor weißem Hintergrund im Erkennungsbereich und zeigt HSV-Codes an"""
+        try:
+            if not hasattr(self, 'detection_area') or self.detection_area is None:
+                return
+                
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            
+            # Bereich extrahieren
+            x_min, y_min = self.detection_area['x_min'], self.detection_area['y_min']
+            x_max, y_max = self.detection_area['x_max'], self.detection_area['y_max']
+            
+            # ROI (Region of Interest) extrahieren
+            roi_hsv = hsv[y_min:y_max, x_min:x_max]
+            roi_bgr = frame[y_min:y_max, x_min:x_max]
+            
+            # Weißen Hintergrund erkennen (hohe Helligkeit, niedrige Sättigung)
+            hue, saturation, value = cv2.split(roi_hsv)
+            
+            # Weiß-Maske: Hohe Helligkeit (> 180) UND niedrige Sättigung (< 50)
+            white_mask = np.logical_and(value > 180, saturation < 50)
+            
+            # Farb-Maske: NICHT weiß UND ausreichend Sättigung für echte Farben
+            color_mask = np.logical_and(~white_mask, saturation > 30)
+            color_mask = np.logical_and(color_mask, value > 50)  # Nicht zu dunkel
+            
+            # Entferne rote Bereiche (Eckpunkte)
+            red_mask1 = cv2.inRange(roi_hsv, np.array([0, 80, 80]), np.array([10, 255, 255]))
+            red_mask2 = cv2.inRange(roi_hsv, np.array([170, 80, 80]), np.array([180, 255, 255]))
+            red_combined = np.logical_or(red_mask1 > 0, red_mask2 > 0)
+            color_mask = np.logical_and(color_mask, ~red_combined)
+            
+            # ZUSÄTZLICH: Entferne falsches GELB bei H:95, S:50, V:225 (schlechte Farberkennung)
+            false_yellow_mask = cv2.inRange(roi_hsv, np.array([90, 40, 200]), np.array([100, 70, 255]))
+            color_mask = np.logical_and(color_mask, false_yellow_mask == 0)
+            
+            # Finde Farbregionen
+            color_mask_uint8 = color_mask.astype(np.uint8) * 255
+            
+            # Morphologische Operationen für zusammenhängende Regionen
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            color_mask_uint8 = cv2.morphologyEx(color_mask_uint8, cv2.MORPH_CLOSE, kernel)
+            color_mask_uint8 = cv2.morphologyEx(color_mask_uint8, cv2.MORPH_OPEN, kernel)
+            
+            # Konturen finden
+            contours, _ = cv2.findContours(color_mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            detected_colors = []
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > 50:  # Mindestgröße
+                    # Schwerpunkt der Farbregion
+                    M = cv2.moments(contour)
+                    if M["m00"] != 0:
+                        cx = int(M["m10"] / M["m00"])
+                        cy = int(M["m01"] / M["m00"])
+                        
+                        # HSV-Werte am Schwerpunkt
+                        h_val = roi_hsv[cy, cx, 0]
+                        s_val = roi_hsv[cy, cx, 1]
+                        v_val = roi_hsv[cy, cx, 2]
+                        
+                        # BGR-Werte für Farbanzeige
+                        b_val = roi_bgr[cy, cx, 0]
+                        g_val = roi_bgr[cy, cx, 1]
+                        r_val = roi_bgr[cy, cx, 2]
+                        
+                        # Absolute Position im Gesamtbild
+                        abs_x = x_min + cx
+                        abs_y = y_min + cy
+                        
+                        detected_colors.append({
+                            'position': (abs_x, abs_y),
+                            'hsv': (int(h_val), int(s_val), int(v_val)),
+                            'bgr': (int(b_val), int(g_val), int(r_val)),
+                            'area': area
+                        })
+            
+            # Farben im Bild anzeigen
+            y_offset = 80
+            for i, color_info in enumerate(detected_colors):
+                pos = color_info['position']
+                hsv_vals = color_info['hsv']
+                bgr_vals = color_info['bgr']
+                
+                # Markiere Position im Bild
+                cv2.circle(frame, pos, 10, (0, 255, 255), 3)  # Gelber Kreis
+                cv2.circle(frame, pos, 15, (0, 0, 0), 2)      # Schwarzer Rand
+                
+                # HSV-Text neben dem Punkt
+                hsv_text = f"H:{hsv_vals[0]} S:{hsv_vals[1]} V:{hsv_vals[2]}"
+                cv2.putText(frame, hsv_text, (pos[0] + 20, pos[1]), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+                
+                # HSV-Werte auch links im Bild auflisten
+                color_text = f"Farbe {i+1}: HSV({hsv_vals[0]}, {hsv_vals[1]}, {hsv_vals[2]})"
+                cv2.putText(frame, color_text, (10, y_offset + i * 25), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
+                # Farbbereich-Vorschlag
+                h_range = f"H: [{max(0, hsv_vals[0]-10)}, {min(180, hsv_vals[0]+10)}]"
+                s_range = f"S: [60, 255]"
+                v_range = f"V: [50, 255]"
+                cv2.putText(frame, f"    Bereich: {h_range}", (10, y_offset + i * 25 + 12), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                
+            # Anzeige der Gesamtanzahl
+            if detected_colors:
+                cv2.putText(frame, f"ERKANNTE FARBEN: {len(detected_colors)}", (10, y_offset - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            else:
+                cv2.putText(frame, "KEINE FARBEN ERKANNT", (10, y_offset - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                           
+        except Exception as e:
+            print(f"Fehler bei Farberkennung: {e}")
+
     def draw_all_detected_points(self, frame):
         """Markiert ALLE erkannten Farbpunkte im Bild zur Debugging-Zwecken"""
         try:
@@ -672,19 +794,19 @@ class MultiVehicleDetector:
             cyan_upper = np.array([105, 255, 255])
             cyan_mask = cv2.inRange(hsv, cyan_lower, cyan_upper)
             
-            # Erkenne alle orangen Punkte (Kopffarbe) - ERWEITERT für helle Beleuchtung
-            front_positions = self.find_all_color_centers(hsv, [5, 80, 100], [20, 255, 255], is_front_color=True)
+            # Erkenne alle orangen Punkte (Kopffarbe) - ANGEPASST auf echte Orange-Werte
+            front_positions = self.find_all_color_centers(hsv, [8, 180, 220], [18, 255, 255], is_front_color=True)
             for pos in front_positions:
                 # NUR Punkte INNERHALB des Erkennungsbereichs zeichnen
                 cv2.circle(frame, pos, 8, (0, 165, 255), 3)  # Orange für Kopf (dicker)
                 cv2.putText(frame, "ORANGE", (pos[0] + 12, pos[1] - 12), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
             
-            # Erkenne alle Heckfarben-Punkte (ERWEITERT für helle Beleuchtung)
+            # Erkenne alle Heckfarben-Punkte (ANGEPASST - Gelb ohne falschen Bereich)
             colors_to_check = [
                 ([100, 80, 30], [130, 255, 255], (255, 0, 0), "BLAU"),      # Blau (heller)
                 ([40, 60, 50], [80, 255, 255], (0, 255, 0), "GRÜN"),        # Grün (heller)
-                ([20, 60, 80], [35, 255, 255], (0, 255, 255), "GELB"),      # Gelb (heller)
+                ([25, 80, 180], [35, 255, 255], (0, 255, 255), "GELB"),     # Gelb (NICHT H:95 - falsches Gelb ausschließen)
                 ([130, 40, 40], [165, 255, 255], (128, 0, 128), "LILA")     # Lila (heller)
             ]
             
@@ -702,9 +824,6 @@ class MultiVehicleDetector:
                 cv2.putText(frame, area_info, (10, 50), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                            
-        except Exception as e:
-            print(f"Fehler beim Zeichnen der erkannten Punkte: {e}")
-                
         except Exception as e:
             print(f"Fehler beim Zeichnen der erkannten Punkte: {e}")
 
