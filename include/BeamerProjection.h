@@ -5,19 +5,17 @@
 
 class BeamerProjection {
 private:
-    // Projektor-Fenster Eigenschaften
-    const int PROJECTOR_WIDTH = 1920;   // Beamer-Auflösung
-    const int PROJECTOR_HEIGHT = 1080;
-    const int BORDER_WIDTH = 20;        // Rand-Breite
+    // Kamera-Markierungspunkte (4 MAGENTA Eckpunkte für Kamera-Kalibrierung)
+    // Keine Rahmen mehr - nur noch 4 Referenzpunkte in den Ecken
     
     // Warnung-Status
     bool show_warnings;
     std::vector<VehicleDetectionData> vehicle_data;
     
     // Private Hilfsfunktionen
-    void draw_border();
+    void draw_camera_frame();           // 4 MAGENTA Eckpunkte für Kamera-Erkennung
     void draw_warning_overlay();
-    void draw_vehicles();  // Neue Methode für Fahrzeug-Rechtecke
+    void draw_vehicles();               // Fahrzeug-Rechtecke
     void draw_vehicle_warnings();
     
 public:

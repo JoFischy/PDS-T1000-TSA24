@@ -40,11 +40,11 @@ void BeamerProjection::update(const std::vector<VehicleDetectionData>& fleet_dat
 void BeamerProjection::draw() {
     BeginDrawing();
     
-    // Weißer Hintergrund
+    // Weißer Hintergrund für optimale Kamera-Erkennung
     ClearBackground(WHITE);
     
-    // Schwarzer Rand um die Projektion
-    draw_border();
+    // Lila Kamera-Markierungsrahmen
+    draw_camera_frame();
     
     // Zeichne alle erkannten Fahrzeuge als Rechtecke
     draw_vehicles();
@@ -57,25 +57,39 @@ void BeamerProjection::draw() {
     EndDrawing();
 }
 
-void BeamerProjection::draw_border() {
-    // Schwarzer Rahmen um den gesamten Bildschirm
-    Color border_color = BLACK;
+void BeamerProjection::draw_camera_frame() {
+    // INTENSIVE ROTE Eckpunkte als Kamera-Markierung - sehr kontrastreich auf weißem Hintergrund
+    Color corner_color = RED;  // Rot - maximaler Kontrast zu weiß, optimal für Kamera-Erkennung
     
     // Hole aktuelle Fenstergröße
     int screen_width = GetScreenWidth();
     int screen_height = GetScreenHeight();
     
-    // Oberer Rand
-    DrawRectangle(0, 0, screen_width, BORDER_WIDTH, border_color);
+    // Größere, intensivere Eckpunkte für bessere Erkennung
+    int corner_radius = 35;  // 70px Durchmesser - sehr gut sichtbar
+    int margin = 15;         // Geringerer Abstand vom Bildschirmrand
     
-    // Unterer Rand
-    DrawRectangle(0, screen_height - BORDER_WIDTH, screen_width, BORDER_WIDTH, border_color);
+    // Zeichne 4 MAGENTA Eckpunkte
+    // Oben Links
+    DrawCircle(margin + corner_radius, margin + corner_radius, (float)corner_radius, corner_color);
     
-    // Linker Rand
-    DrawRectangle(0, 0, BORDER_WIDTH, screen_height, border_color);
+    // Oben Rechts  
+    DrawCircle(screen_width - margin - corner_radius, margin + corner_radius, (float)corner_radius, corner_color);
     
-    // Rechter Rand
-    DrawRectangle(screen_width - BORDER_WIDTH, 0, BORDER_WIDTH, screen_height, border_color);
+    // Unten Links
+    DrawCircle(margin + corner_radius, screen_height - margin - corner_radius, (float)corner_radius, corner_color);
+    
+    // Unten Rechts
+    DrawCircle(screen_width - margin - corner_radius, screen_height - margin - corner_radius, (float)corner_radius, corner_color);
+    
+    // Informationstext in der Mitte oben
+    const char* info_text = "KAMERA-ERKENNUNGSBEREICH - 4 ROTE Eckpunkte";
+    int text_width = MeasureText(info_text, 16);
+    DrawText(info_text, 
+             (screen_width - text_width) / 2, 
+             15, 
+             16, 
+             BLACK);  // Schwarzer Text auf weißem Hintergrund
 }
 
 void BeamerProjection::draw_warning_overlay() {
@@ -144,36 +158,43 @@ void BeamerProjection::draw_vehicles() {
             // Fahrzeug-Koordinaten: X = rechts/links, Y = vor/zurück
             // Raylib-Koordinaten: X = rechts/links, Y = unten/oben
             
-            float scale_x = (screen_width - 2 * BORDER_WIDTH) / 1000.0f;
-            float scale_y = (screen_height - 2 * BORDER_WIDTH) / 1000.0f;
+            // Verfügbarer Bereich zwischen den Eckpunkten (85px Abstand von jeder Seite)
+            const int corner_margin = 85;  // Platz für größere Eckpunkte + Abstand
+            float scale_x = (screen_width - 2 * corner_margin) / 1000.0f;
+            float scale_y = (screen_height - 2 * corner_margin) / 1000.0f;
             
             // KORREKTE Zuordnung: 
             // - Fahrzeug fährt nach rechts (X+) -> Raylib nach rechts (X+) ✓
             // - Fahrzeug fährt nach unten (Y+) -> Raylib nach unten (Y+) - NICHT invertieren!
-            int x = (int)(vehicle.position.x * scale_x) + BORDER_WIDTH;
-            int y = (int)(vehicle.position.y * scale_y) + BORDER_WIDTH;  // Y NICHT invertiert!
+            int x = (int)(vehicle.position.x * scale_x) + corner_margin;
+            int y = (int)(vehicle.position.y * scale_y) + corner_margin;  // Y NICHT invertiert!
             
-            // Fahrzeuggröße (20x30 Pixel Rechteck)
-            int vehicle_width = 20;
-            int vehicle_height = 30;
+            // Fahrzeuggröße (schwarzes Rechteck mit Markierungspunkten)
+            int vehicle_width = 24;   // Etwas größer für bessere Sichtbarkeit
+            int vehicle_height = 36;
             
-            // Farbe basierend auf Heckfarbe
-            Color vehicle_color = BLACK;  // Default
-            if (vehicle.rear_color == "Blau") vehicle_color = BLUE;
-            else if (vehicle.rear_color == "Grün") vehicle_color = GREEN;
-            else if (vehicle.rear_color == "Gelb") vehicle_color = YELLOW;
-            else if (vehicle.rear_color == "Lila") vehicle_color = PURPLE;
-            else if (vehicle.rear_color == "Rot") vehicle_color = RED;
-            
-            // Zeichne Fahrzeug als gefülltes Rechteck
+            // SCHWARZES Fahrzeug (realistisch)
             DrawRectangle(x - vehicle_width/2, y - vehicle_height/2, 
-                         vehicle_width, vehicle_height, vehicle_color);
+                         vehicle_width, vehicle_height, BLACK);
             
-            // Schwarzer Rahmen um das Fahrzeug
-            DrawRectangleLines(x - vehicle_width/2, y - vehicle_height/2, 
-                              vehicle_width, vehicle_height, BLACK);
+            // HOCHKONTRASTREICHE Markierungspunkte auf dem schwarzen Fahrzeug
+            Color front_color = ORANGE;  // Orange vorne (einheitlich)
+            Color rear_color = BLACK;    // Default
             
-            // Fahrzeug-ID als Text
+            // Optimierte Farben für weiße Projektionsfläche
+            if (vehicle.rear_color == "Blau") rear_color = {0, 100, 255, 255};      // Helles Blau
+            else if (vehicle.rear_color == "Grün") rear_color = {0, 255, 0, 255};   // Reines Grün
+            else if (vehicle.rear_color == "Gelb") rear_color = {255, 255, 0, 255}; // Reines Gelb
+            else if (vehicle.rear_color == "Lila") rear_color = {255, 0, 255, 255}; // Reines Magenta
+            else if (vehicle.rear_color == "Rot") rear_color = {255, 0, 0, 255};    // Reines Rot
+            
+            // VORDERER Markierungspunkt (ORANGE)
+            DrawCircle(x, y - vehicle_height/3, 6, front_color);
+            
+            // HINTERER Markierungspunkt (individuelle Farbe)
+            DrawCircle(x, y + vehicle_height/3, 6, rear_color);
+            
+            // Fahrzeug-ID als Text (weiß auf schwarz für Kontrast)
             std::string vehicle_id = std::to_string(i + 1);
             DrawText(vehicle_id.c_str(), x - 5, y - 5, 12, WHITE);
             
@@ -191,13 +212,17 @@ void BeamerProjection::draw_vehicles() {
         }
     }
     
-    // Koordinatensystem-Legende
-    int legend_x = GetScreenWidth() - 250;
-    int legend_y = 20;
+    // Koordinatensystem-Legende (innerhalb des nutzbaren Bereichs)
+    int legend_x = GetScreenWidth() - 270;
+    int legend_y = 80;  // Unterhalb der Eckpunkte
     DrawText("FAHRZEUG-POSITIONEN", legend_x, legend_y, 16, BLACK);
     DrawText("Quadrat = Fahrzeug", legend_x, legend_y + 20, 12, DARKGRAY);
     DrawText("Linie = Fahrtrichtung", legend_x, legend_y + 35, 12, DARKGRAY);
     DrawText("Zahl = Fahrzeug-ID", legend_x, legend_y + 50, 12, DARKGRAY);
     DrawText("Unten = Vorwärts", legend_x, legend_y + 70, 10, DARKGRAY);
     DrawText("Rechts = Rechts", legend_x, legend_y + 85, 10, DARKGRAY);
+    
+    // Kamera-Bereich Information
+    DrawText("ROTE ECKPUNKTE = Kamera-Erkennungsbereich", legend_x, legend_y + 105, 10, RED);
+    DrawText("ESC = Beenden | F11 = Vollbild", legend_x, legend_y + 120, 10, DARKGRAY);
 }

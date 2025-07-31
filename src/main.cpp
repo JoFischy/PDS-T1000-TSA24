@@ -15,31 +15,61 @@ int main() {
             return 1;
         }
         
-        // Quadratisches Hauptfenster in der Bildschirmmitte (800x800)
-        const int WINDOW_SIZE = 800;
-        InitWindow(WINDOW_SIZE, WINDOW_SIZE, "BEAMER PROJEKTION - Fahrzeug-Positionen");
+        // Großes verschiebbares Fenster für Beamer-Projektion
+        // Initialisiere erst mit einer Standardgröße
+        const int DEFAULT_WIDTH = 1600;
+        const int DEFAULT_HEIGHT = 1200;
         
-        // Zentriere das Fenster auf dem Bildschirm
+        InitWindow(DEFAULT_WIDTH, DEFAULT_HEIGHT, "BEAMER PROJEKTION - Boden-Markierung");
+        
+        // Jetzt können wir die Monitor-Größe abfragen
         int monitor_width = GetMonitorWidth(0);
         int monitor_height = GetMonitorHeight(0);
-        int window_x = (monitor_width - WINDOW_SIZE) / 2;
-        int window_y = (monitor_height - WINDOW_SIZE) / 2;
-        SetWindowPosition(window_x, window_y);
+        
+        // Fenster auf optimale Größe anpassen (etwas kleiner als Monitor)
+        int window_width = monitor_width - 100;
+        int window_height = monitor_height - 100;
+        
+        // Stelle sicher, dass die Werte positiv sind
+        if (window_width < 800) window_width = 800;
+        if (window_height < 600) window_height = 600;
+        
+        // Fenstergröße anpassen
+        SetWindowSize(window_width, window_height);
+        
+        // Fenster zentrieren
+        SetWindowPosition((monitor_width - window_width) / 2, (monitor_height - window_height) / 2);
+        
+        // Fenster kann vergrößert werden
+        SetWindowState(FLAG_WINDOW_RESIZABLE);
         
         BeamerProjection beamer;
         beamer.initialize();
         SetTargetFPS(30);
         
-        std::cout << "=== FAHRZEUGFLOTTE GESTARTET ===" << std::endl;
-        std::cout << "EINHEITLICHE VORDERE FARBE: ORANGE" << std::endl;
-        std::cout << "Auto-1: Orange vorne, Blau hinten" << std::endl;
-        std::cout << "Auto-2: Orange vorne, Grün hinten" << std::endl;
-        std::cout << "Auto-3: Orange vorne, Gelb hinten" << std::endl;
-        std::cout << "Auto-4: Orange vorne, Lila hinten" << std::endl;
-        std::cout << "Intelligente Paar-Zuordnung aktiv!" << std::endl;
-        std::cout << "=================================" << std::endl;
+        std::cout << "=== BEAMER-PROJEKTION FENSTER ===" << std::endl;
+        std::cout << "4 ROTE ECKPUNKTE = Kamera-Erkennungsbereich (maximaler Kontrast!)" << std::endl;
+        std::cout << "ESC = Beenden | F11 = Vollbild umschalten" << std::endl;
+        std::cout << "Fenster ist verschiebbar und vergrößerbar" << std::endl;
+        std::cout << "SCHWARZE FAHRZEUGE mit MARKIERUNGSPUNKTEN:" << std::endl;
+        std::cout << "Auto-1: Orange vorne, Helles Blau hinten" << std::endl;
+        std::cout << "Auto-2: Orange vorne, Reines Grün hinten" << std::endl;
+        std::cout << "Auto-3: Orange vorne, Reines Gelb hinten" << std::endl;
+        std::cout << "Auto-4: Orange vorne, Reines Magenta hinten" << std::endl;
+        std::cout << "Optimiert für weiße Projektionsfläche!" << std::endl;
+        std::cout << "==================================" << std::endl;
         
         while (!WindowShouldClose()) {
+            // ESC-Taste zum Verlassen des Vollbildmodus
+            if (IsKeyPressed(KEY_ESCAPE)) {
+                break;
+            }
+            
+            // F11 zum Umschalten Vollbild/Fenster
+            if (IsKeyPressed(KEY_F11)) {
+                ToggleFullscreen();
+            }
+            
             // Hole aktuelle Fahrzeugdaten
             std::vector<VehicleDetectionData> vehicle_data = get_all_vehicle_detections();
             
