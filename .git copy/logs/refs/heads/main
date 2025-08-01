@@ -1,0 +1,4 @@
+0000000000000000000000000000000000000000 57f7334fc601d0b027676ab5926ee90a2fd15b7b Jonas Zeller <45827152-jnszeller@users.noreply.replit.com> 1754026070 +0000	branch: Created from origin/main
+57f7334fc601d0b027676ab5926ee90a2fd15b7b 9358d311c7327e91c8b1c095a7bba04ca4b03997 jnszeller <45827152-jnszeller@users.noreply.replit.com> 1754026483 +0000	commit: Checkpoint before assistant change: Set up the environment for the new combined C++ and Python project
+9358d311c7327e91c8b1c095a7bba04ca4b03997 4e6dfcee05f2d71ac3aa945903e7ce03295079b4 Jonas Zeller <45827152-jnszeller@users.noreply.replit.com> 1754026594 +0000	commit: Assistant checkpoint: Komplettes neues System: Raylib+Python Farberkennung
+4e6dfcee05f2d71ac3aa945903e7ce03295079b4 aa680d4bf41fddfe95e072df020ab290c16f00dc jnszeller <45827152-jnszeller@users.noreply.replit.com> 1754026667 +0000	commit: Checkpoint before assistant change: Add custom workflows for starting the beamer and testing the camera
