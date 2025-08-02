@@ -6,7 +6,17 @@
 // Initialize Python interpreter (call once at startup)
 void initialize_python();
 
-// === Fahrzeugflotte-Funktionen ===
+// === Neue Koordinaten-Erkennung ===
+// Initialize coordinate detector using new Farberkennung.py
+bool initialize_coordinate_detector();
+
+// Get detected objects with normalized coordinates
+std::vector<DetectedObject> get_detected_coordinates();
+
+// Cleanup coordinate detector resources
+void cleanup_coordinate_detector();
+
+// === LEGACY: Fahrzeugflotte-Funktionen (optional) ===
 // Initialize vehicle fleet with 4 predefined vehicles (all yellow front, different rear colors)
 bool initialize_vehicle_fleet();
 

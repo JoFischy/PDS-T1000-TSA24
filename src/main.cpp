@@ -1,66 +1,48 @@
 #include "raylib.h"
-#include "../include/MultiCarDisplay.h"
-#include "../include/BeamerProjection.h"
 #include "../include/py_runner.h"
+#include "../include/Vehicle.h"
 #include <iostream>
-#include <chrono>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
 int main() {
     try {
-        // Initialize Python interpreter and vehicle fleet
+        // Initialize Python interpreter and coordinate detector
         initialize_python();
         
-        if (!initialize_vehicle_fleet()) {
-            std::cerr << "Fehler: Fahrzeugflotte konnte nicht initialisiert werden!" << std::endl;
+        if (!initialize_coordinate_detector()) {
+            std::cerr << "Fehler: Koordinaten-Detektor konnte nicht initialisiert werden!" << std::endl;
             return 1;
         }
         
-        // Großes verschiebbares Fenster für Beamer-Projektion
-        // Initialisiere erst mit einer Standardgröße
-        const int DEFAULT_WIDTH = 1600;
-        const int DEFAULT_HEIGHT = 1200;
+        // Zuerst Raylib initialisieren
+        InitWindow(800, 600, "Koordinaten-Anzeige - Initialisierung");
         
-        InitWindow(DEFAULT_WIDTH, DEFAULT_HEIGHT, "BEAMER PROJEKTION - Boden-Markierung");
+        // Dann Monitor-Größe holen
+        const int MONITOR_WIDTH = GetMonitorWidth(0);
+        const int MONITOR_HEIGHT = GetMonitorHeight(0);
         
-        // Jetzt können wir die Monitor-Größe abfragen
-        int monitor_width = GetMonitorWidth(0);
-        int monitor_height = GetMonitorHeight(0);
+        // Etwas kleineres Fenster als Monitor für Titelleiste und Taskleiste
+        const int WINDOW_WIDTH = MONITOR_WIDTH - 100;
+        const int WINDOW_HEIGHT = MONITOR_HEIGHT - 150;
         
-        // Fenster auf optimale Größe anpassen (etwas kleiner als Monitor)
-        int window_width = monitor_width - 100;
-        int window_height = monitor_height - 100;
+        // Fenster auf gewünschte Größe setzen
+        SetWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT);
+        SetWindowTitle("Koordinaten-Anzeige - Maximiert");
         
-        // Stelle sicher, dass die Werte positiv sind
-        if (window_width < 800) window_width = 800;
-        if (window_height < 600) window_height = 600;
+        // Fenster in der Mitte positionieren
+        SetWindowPosition(50, 50);
         
-        // Fenstergröße anpassen
-        SetWindowSize(window_width, window_height);
+        SetTargetFPS(60);
         
-        // Fenster zentrieren
-        SetWindowPosition((monitor_width - window_width) / 2, (monitor_height - window_height) / 2);
-        
-        // Fenster kann vergrößert werden
-        SetWindowState(FLAG_WINDOW_RESIZABLE);
-        
-        BeamerProjection beamer;
-        beamer.initialize();
-        SetTargetFPS(30);
-        
-        std::cout << "=== BEAMER-PROJEKTION FENSTER ===" << std::endl;
-        std::cout << "4 ROTE ECKPUNKTE = Kamera-Erkennungsbereich (maximaler Kontrast!)" << std::endl;
-        std::cout << "ESC = Beenden | F11 = Vollbild umschalten" << std::endl;
-        std::cout << "Fenster ist verschiebbar und vergrößerbar" << std::endl;
-        std::cout << "SCHWARZE FAHRZEUGE mit MARKIERUNGSPUNKTEN:" << std::endl;
-        std::cout << "Auto-1: Orange vorne, Helles Blau hinten" << std::endl;
-        std::cout << "Auto-2: Orange vorne, Reines Grün hinten" << std::endl;
-        std::cout << "Auto-3: Orange vorne, Reines Gelb hinten" << std::endl;
-        std::cout << "Auto-4: Orange vorne, Reines Magenta hinten" << std::endl;
-        std::cout << "Optimiert für weiße Projektionsfläche!" << std::endl;
-        std::cout << "==================================" << std::endl;
+        std::cout << "=== KOORDINATEN-ANZEIGE MAXIMIERT ===" << std::endl;
+        std::cout << "Maximiertes Fenster " << WINDOW_WIDTH << "x" << WINDOW_HEIGHT << " mit erkannten Koordinaten" << std::endl;
+        std::cout << "Monitor: " << MONITOR_WIDTH << "x" << MONITOR_HEIGHT << std::endl;
+        std::cout << "ESC = Beenden | F11 = Vollbild umschalten | Fenster verschiebbar" << std::endl;
+        std::cout << "====================================" << std::endl;
         
         while (!WindowShouldClose()) {
-            // ESC-Taste zum Verlassen des Vollbildmodus
             if (IsKeyPressed(KEY_ESCAPE)) {
                 break;
             }
@@ -70,30 +52,63 @@ int main() {
                 ToggleFullscreen();
             }
             
-            // Hole aktuelle Fahrzeugdaten
-            std::vector<VehicleDetectionData> vehicle_data = get_all_vehicle_detections();
+            // Aktuelle Fenstergröße holen
+            int current_width = GetScreenWidth();
+            int current_height = GetScreenHeight();
             
-            // Update Beamer-Projektion
-            beamer.update(vehicle_data);
-            show_fleet_camera_feed();  // Zeigt OpenCV Debug-Fenster
+            // Hole aktuelle Koordinaten von der Farberkennung
+            std::vector<DetectedObject> detected_objects = get_detected_coordinates();
             
-            // Konsolen-Debug-Ausgabe
-            static int debug_counter = 0;
-            if (++debug_counter % 30 == 0) {  // Alle 30 Frames (1 Sekunde)
-                int detected = 0;
-                for (const auto& v : vehicle_data) if (v.detected) detected++;
-                std::cout << "STATUS: " << detected << "/" << vehicle_data.size() << " Fahrzeuge erkannt" << std::endl;
+            BeginDrawing();
+            ClearBackground(WHITE);
+            
+            // Zeichne erkannte Objekte
+            for (size_t i = 0; i < detected_objects.size(); i++) {
+                const auto& obj = detected_objects[i];
+                
+                // Skaliere Koordinaten auf aktuelle Fenstergröße basierend auf echten Crop-Dimensionen
+                // Koordinaten sind in Pixeln innerhalb des aktuellen Crop-Bereichs
+                float scale_x = (obj.crop_width > 0) ? current_width / obj.crop_width : 1.0f;   
+                float scale_y = (obj.crop_height > 0) ? current_height / obj.crop_height : 1.0f;
+                float x = obj.coordinates.x * scale_x;
+                float y = obj.coordinates.y * scale_y;
+                
+                // Stelle sicher, dass die Koordinaten im Fenster bleiben
+                x = fmax(0, fmin(x, current_width - 20));
+                y = fmax(0, fmin(y, current_height - 20));
+                
+                // Wähle Farbe basierend auf dem erkannten Objekttyp
+                Color color = RED;
+                if (obj.color == "Front") color = ORANGE;
+                else if (obj.color == "Heck1") color = BLUE;
+                else if (obj.color == "Heck2") color = GREEN;
+                else if (obj.color == "Heck3") color = YELLOW;
+                else if (obj.color == "Heck4") color = PURPLE;
+                
+                // Zeichne Punkt (größer für Vollbild)
+                int point_size = current_width > 1920 ? 20 : 15; // Größere Punkte bei hoher Auflösung
+                DrawCircle((int)x, (int)y, point_size, color);
+                
+                // Zeichne Label mit Crop-Info (größere Schrift für Vollbild)
+                int font_size = current_width > 1920 ? 24 : 16;
+                std::string label = obj.color + " (" + std::to_string((int)obj.coordinates.x) + "," + std::to_string((int)obj.coordinates.y) + ") " + std::to_string((int)obj.crop_width) + "x" + std::to_string((int)obj.crop_height);
+                DrawText(label.c_str(), (int)x + point_size + 5, (int)y - font_size/2, font_size, BLACK);
             }
             
-            // Handle OpenCV window events
-            handle_opencv_events();
+            // Status-Info (größere Schrift für Vollbild)
+            int status_font_size = current_width > 1920 ? 32 : 20;
+            std::string status = "Erkannte Objekte: " + std::to_string(detected_objects.size()) + " | Auflösung: " + std::to_string(current_width) + "x" + std::to_string(current_height);
+            DrawText(status.c_str(), 20, 20, status_font_size, BLACK);
             
-            // Render nur Beamer-Projektion
-            beamer.draw();
+            // Anweisungen
+            std::string instructions = "ESC=Beenden | F11=Vollbild umschalten | Fenster verschiebbar";
+            DrawText(instructions.c_str(), 20, 20 + status_font_size + 10, status_font_size - 8, DARKGRAY);
+            
+            EndDrawing();
         }
         
         // Cleanup
-        cleanup_vehicle_fleet();
+        cleanup_coordinate_detector();
         CloseWindow();
         
     } catch (const std::exception& e) {

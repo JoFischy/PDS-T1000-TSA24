@@ -5,7 +5,7 @@
 Dieses Projekt wurde vereinfacht und enthält jetzt nur noch:
 
 1. **Ein weißes Raylib-Fenster** (`src/main.cpp`) das erkannte Koordinaten anzeigt
-2. **Eine neue Farberkennung** (`src/Farberkennung.py`) die Objekte in verschiedenen Farben erkennt
+2. **Eine neue Farberkennung** (`Farberkennung.py`) die Objekte in verschiedenen Farben erkennt
 3. **Python-C++ Integration** über pybind11 (`src/py_runner.cpp`)
 
 ## Struktur
@@ -13,37 +13,18 @@ Dieses Projekt wurde vereinfacht und enthält jetzt nur noch:
 ```
 ├── src/
 │   ├── main.cpp           # Hauptprogramm: Weißes Raylib-Fenster
-│   ├── py_runner.cpp      # Python-C++ Bridge
-│   └── Farberkennung.py   # Neue Koordinaten-Erkennung
+│   └── py_runner.cpp      # Python-C++ Bridge
 ├── include/
 │   ├── Vehicle.h          # Datenstrukturen
 │   ├── py_runner.h        # Python-Interface
 │   └── pybind11/          # Python-Binding Headers
-├── .vscode/
-│   ├── tasks.json         # Build-Tasks für VS Code
-│   └── launch.json        # Debug-Konfiguration
+├── Farberkennung.py       # Neue Koordinaten-Erkennung
 └── external/raylib/       # Raylib Bibliothek
 ```
 
-## Entwicklung mit VS Code
-
-### Mit F5 starten:
-1. **"Debug Main Program"** - Kompiliert und startet das C++ Programm
-2. **"Run Farberkennung (Python)"** - Startet nur die Python-Farberkennung
-
-### Build-Tasks (Ctrl+Shift+P > "Tasks: Run Task"):
-- **"Build Main"** - Kompiliert das C++ Programm
-- **"Run Farberkennung"** - Startet die Python-Farberkennung
-- **"Run Main"** - Startet das C++ Programm (kompiliert automatisch)
-- **"Build and Run"** - Kompiliert und startet das C++ Programm
-
-## Manuelle Kompilierung
+## Kompilierung
 
 ```bash
-# Mit Build-Skript (Windows)
-.\build.bat
-
-# Oder direkt mit g++
 g++ -std=c++17 -Wall -Wextra -Iexternal/raylib/src -Iinclude -I"C:/Program Files/Python311/include" src/main.cpp src/py_runner.cpp -Lexternal/raylib/src -lraylib -lopengl32 -lgdi32 -lwinmm -L"C:/Program Files/Python311/libs" -lpython311 -o main
 ```
 
@@ -51,7 +32,7 @@ g++ -std=c++17 -Wall -Wextra -Iexternal/raylib/src -Iinclude -I"C:/Program Files
 
 1. **Farberkennung allein testen:**
    ```bash
-   python src/Farberkennung.py
+   python Farberkennung.py
    ```
 
 2. **C++ Programm starten:**
@@ -73,5 +54,13 @@ Die Farberkennung liefert normalisierte Koordinaten relativ zum Crop-Bereich:
 - X: 0 bis crop_width
 - Y: 0 bis crop_height
 - Ursprung (0,0) = oben links
+
+## Entfernte Komponenten
+
+- BeamerProjection (komplexe Projektion)
+- MultiCarDisplay (Multi-Fahrzeug-Anzeige)
+- VehicleFleet (Fahrzeugverwaltung)
+- MultiVehicleKamera.py (alte Erkennung)
+- Alle anderen Python-Erkennungsskripte
 
 Das System ist jetzt deutlich einfacher und fokussiert sich nur auf die Koordinaten-Übertragung von Python zu C++.

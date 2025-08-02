@@ -5,9 +5,9 @@ Release/
 RelWithDebInfo/
 MinSizeRel/
 
-# Platform-specific configuration files (DO NOT COMMIT)
-CMakeLists.txt
-src/py_runner.cpp
+# Executable files
+main.exe
+main
 
 # Python cache
 __pycache__/
@@ -17,7 +17,10 @@ __pycache__/
 .Python
 *.so
 
-# Alte/überflüssige Dateien ignorieren
+# Temporary files
+coordinates.json
+*.tmp
+*.log
 Kamera.py
 
 # Virtual environments
