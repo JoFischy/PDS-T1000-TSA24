@@ -36,7 +36,8 @@ class SimpleCoordinateDetector:
 
     def create_trackbars(self):
         """Erstelle Schieberegler"""
-        cv2.namedWindow('Einstellungen', cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow('Einstellungen', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Einstellungen', 400, 600)
         cv2.moveWindow('Einstellungen', 50, 50)
         
         cv2.createTrackbar('Mindest-Groesse', 'Einstellungen', self.min_size, 300, lambda x: None)
@@ -276,8 +277,10 @@ class SimpleCoordinateDetector:
                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
             # Zeige Video mit erkannten Objekten
-            cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_AUTOSIZE)
-            cv2.namedWindow("Crop-Bereich", cv2.WINDOW_AUTOSIZE)
+            cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
+            cv2.namedWindow("Crop-Bereich", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Koordinaten-Erkennung", 640, 480)
+            cv2.resizeWindow("Crop-Bereich", 640, 480)
             cv2.moveWindow("Koordinaten-Erkennung", 100, 100)
             cv2.moveWindow("Crop-Bereich", 800, 100)
             
@@ -360,8 +363,10 @@ class SimpleCoordinateDetector:
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         # Zeige Video mit erkannten Objekten
-        cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_AUTOSIZE)
-        cv2.namedWindow("Crop-Bereich", cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Crop-Bereich", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Koordinaten-Erkennung", 640, 480)
+        cv2.resizeWindow("Crop-Bereich", 640, 480)
         cv2.moveWindow("Koordinaten-Erkennung", 100, 100)
         cv2.moveWindow("Crop-Bereich", 800, 100)
         
