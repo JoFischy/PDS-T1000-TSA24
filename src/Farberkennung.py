@@ -311,17 +311,27 @@ class SimpleCoordinateDetector:
         if not ret:
             return []
         
+        self.get_trackbar_values()
         cropped_frame, crop_bounds = self.crop_frame(frame)
         detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
         
-        # Update current detections thread-safe
-        with self.detection_lock:
-            self.current_detections = detected_objects
+        # Konvertiere für C++ Format
+        cpp_objects = []
+        for obj in detected_objects:
+            cpp_obj = {
+                'id': obj['id'],
+                'classified_color': obj['classified_color'],
+                'normalized_coords': obj['normalized_coords'],
+                'area': obj['area'],
+                'crop_width': crop_width,
+                'crop_height': crop_height
+            }
+            cpp_objects.append(cpp_obj)
         
-        return detected_objects
+        return cpp_objects
 
     def process_frame_with_display(self):
-        """Verarbeite Frame mit OpenCV-Anzeige für C++ (wie im Interactive Mode)"""
+        """Verarbeite Frame mit Anzeige für C++ Integration"""
         if self.cap is None:
             return []
         
@@ -333,12 +343,7 @@ class SimpleCoordinateDetector:
         cropped_frame, crop_bounds = self.crop_frame(frame)
         detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
         
-        # Füge Crop-Dimensionen zu jedem Objekt hinzu
-        for obj in detected_objects:
-            obj['crop_width'] = crop_width
-            obj['crop_height'] = crop_height
-        
-        # Visualisierung (wie in run_detection)
+        # Visualisierung
         left, top, right, bottom = crop_bounds
         cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 3)
         cv2.putText(frame, "ERKENNUNGSBEREICH", (left, top - 10), 
@@ -376,52 +381,29 @@ class SimpleCoordinateDetector:
         # Force window update
         cv2.waitKey(1)
         
-        # Update current detections thread-safe
-        with self.detection_lock:
-            self.current_detections = detected_objects
+        # Konvertiere für C++ Format
+        cpp_objects = []
+        for obj in detected_objects:
+            cpp_obj = {
+                'id': obj['id'],
+                'classified_color': obj['classified_color'],
+                'normalized_coords': obj['normalized_coords'],
+                'area': obj['area'],
+                'crop_width': crop_width,
+                'crop_height': crop_height
+            }
+            cpp_objects.append(cpp_obj)
         
-        return detected_objects
-
-    def run_detection_background(self):
-        """Erkennungsschleife im Hintergrund (für C++ Threading)"""
-        if not self.initialize_camera():
-            print("FEHLER: Kamera konnte nicht initialisiert werden!")
-            return
-        
-        self.running = True
-        print("=== HINTERGRUND KOORDINATEN-ERKENNUNG ===")
-        print("Koordinaten werden für C++ bereitgestellt")
-        print("=========================================")
-        
-        while self.running:
-            ret, frame = self.cap.read()
-            if not ret:
-                break
-            
-            cropped_frame, crop_bounds = self.crop_frame(frame)
-            detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
-            
-            # Update current detections thread-safe
-            with self.detection_lock:
-                self.current_detections = detected_objects
-            
-            # Short sleep to prevent busy waiting
-            time.sleep(0.033)  # ~30 FPS
-        
-        self.cap.release()
-        print("Hintergrund-Erkennung beendet.")
-
-    def stop_detection(self):
-        """Stoppe die Hintergrund-Erkennung"""
-        self.running = False
+        return cpp_objects
 
     def cleanup(self):
         """Aufräumen"""
-        self.stop_detection()
-        if self.cap is not None:
+        if self.cap:
             self.cap.release()
         cv2.destroyAllWindows()
+        print("Python Koordinaten-Detektor aufgeräumt.")
 
+# Hauptfunktion für direkten Start
 if __name__ == "__main__":
     detector = SimpleCoordinateDetector()
     detector.run_detection()
