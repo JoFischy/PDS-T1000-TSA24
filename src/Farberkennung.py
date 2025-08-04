@@ -27,17 +27,26 @@ class SimpleCoordinateDetector:
         
         # Farbdefinitionen (HSV)
         self.color_definitions = {
-            'Front': [167, 79, 183],
-            'Heck1': [94, 65, 169],
-            'Heck2': [4, 89, 203],
-            'Heck3': [33, 41, 187],
-            'Heck4': [74, 49, 160]
+            'Front': [109, 237, 240],
+            'Heck1': [14, 245, 254],
+            'Heck2': [152, 195, 165],
+            'Heck3': [20, 252, 244],
+            'Heck4': [80, 234, 140]
+        }
+        
+        # Toleranz-Einstellungen für jede Farbe
+        self.color_tolerances = {
+            'Front': 50,
+            'Heck1': 50,
+            'Heck2': 50,
+            'Heck3': 50,
+            'Heck4': 50
         }
 
     def create_trackbars(self):
         """Erstelle Schieberegler"""
         cv2.namedWindow('Einstellungen', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Einstellungen', 400, 600)
+        cv2.resizeWindow('Einstellungen', 400, 800)
         cv2.moveWindow('Einstellungen', 50, 50)
         
         cv2.createTrackbar('Mindest-Groesse', 'Einstellungen', self.min_size, 300, lambda x: None)
@@ -45,6 +54,10 @@ class SimpleCoordinateDetector:
         cv2.createTrackbar('Crop Rechts', 'Einstellungen', self.crop_right, 400, lambda x: None)
         cv2.createTrackbar('Crop Oben', 'Einstellungen', self.crop_top, 300, lambda x: None)
         cv2.createTrackbar('Crop Unten', 'Einstellungen', self.crop_bottom, 300, lambda x: None)
+        
+        # Toleranz-Schieberegler für jede Farbe
+        for color_name in self.color_definitions.keys():
+            cv2.createTrackbar(f'Toleranz {color_name}', 'Einstellungen', self.color_tolerances[color_name], 200, lambda x: None)
 
     def get_trackbar_values(self):
         """Lese Trackbar-Werte"""
@@ -53,11 +66,15 @@ class SimpleCoordinateDetector:
         self.crop_right = cv2.getTrackbarPos('Crop Rechts', 'Einstellungen')
         self.crop_top = cv2.getTrackbarPos('Crop Oben', 'Einstellungen')
         self.crop_bottom = cv2.getTrackbarPos('Crop Unten', 'Einstellungen')
+        
+        # Toleranz-Werte für jede Farbe lesen
+        for color_name in self.color_definitions.keys():
+            self.color_tolerances[color_name] = cv2.getTrackbarPos(f'Toleranz {color_name}', 'Einstellungen')
 
     def initialize_camera(self):
         """Kamera initialisieren"""
         try:
-            for camera_index in [0, 1, 2]:
+            for camera_index in [0, 2, 3]:
                 print(f"Versuche Kamera {camera_index}...")
                 self.cap = cv2.VideoCapture(camera_index)
                 
@@ -89,19 +106,22 @@ class SimpleCoordinateDetector:
         return cropped_frame, (left, top, right, bottom)
 
     def find_closest_color(self, hsv_value):
-        """Finde wahrscheinlichste Farbe"""
+        """Finde wahrscheinlichste Farbe mit individueller Toleranz"""
         h, s, v = hsv_value
         closest_color = None
         min_distance = float('inf')
         
         for color_name, color_hsv in self.color_definitions.items():
+            tolerance = self.color_tolerances[color_name]
+            
             dh = min(abs(h - color_hsv[0]), 360 - abs(h - color_hsv[0]))
             ds = abs(s - color_hsv[1])
             dv = abs(v - color_hsv[2])
             
             distance = (dh * 2) + ds + dv
             
-            if distance < min_distance:
+            # Prüfe ob Farbe innerhalb der individuellen Toleranz liegt
+            if distance <= tolerance and distance < min_distance:
                 min_distance = distance
                 closest_color = color_name
                 
@@ -276,6 +296,13 @@ class SimpleCoordinateDetector:
             cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
+            # Toleranz-Anzeige
+            y_offset = 90
+            for color_name, tolerance in self.color_tolerances.items():
+                cv2.putText(frame, f"{color_name}: Tol={tolerance}", 
+                           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                y_offset += 20
+            
             # Zeige Video mit erkannten Objekten
             cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
             cv2.namedWindow("Crop-Bereich", cv2.WINDOW_NORMAL)
@@ -366,6 +393,13 @@ class SimpleCoordinateDetector:
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        # Toleranz-Anzeige
+        y_offset = 90
+        for color_name, tolerance in self.color_tolerances.items():
+            cv2.putText(frame, f"{color_name}: Tol={tolerance}", 
+                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+            y_offset += 20
         
         # Zeige Video mit erkannten Objekten
         cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
