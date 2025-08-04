@@ -1,0 +1,18 @@
+{
+  "timestamp": 1754299373.6547728,
+  "crop_area": {
+    "width": 369,
+    "height": 247
+  },
+  "objects": [
+    {
+      "id": 25,
+      "color": "Heck3",
+      "coordinates": {
+        "x": 150.0,
+        "y": 153.0
+      },
+      "area": 136.5
+    }
+  ]
+}

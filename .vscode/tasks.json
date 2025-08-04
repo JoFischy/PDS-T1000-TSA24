@@ -1,0 +1,318 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Main",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Iexternal/raylib/src",
+                "-Iinclude",
+                "-IC:/Program Files/Python311/Include",
+                "src/main.cpp",
+                "src/py_runner.cpp",
+                "src/car_simulation.cpp",
+                "-Lexternal/raylib/src",
+                "-lraylib",
+                "-lopengl32",
+                "-lgdi32",
+                "-lwinmm",
+                "-LC:/Program Files/Python311/libs",
+                "-lpython311",
+                "-o",
+                "main"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Run Farberkennung",
+            "type": "shell",
+            "command": "python",
+            "args": ["src/Farberkennung.py"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Run Main",
+            "type": "shell",
+            "command": "./main.exe",
+            "group": "test",
+            "dependsOn": "Build Main",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "new"
+            }
+        },
+        {
+            "label": "Build and Run",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Build Main",
+                "Run Main"
+            ],
+            "group": "test"
+        },
+        {
+            "label": "ESP-IDF: Build",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "-p",
+                "${config:idf.port}",
+                "-b",
+                "${config:idf.baudRate}",
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": {
+                "owner": "cpp",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.):(\\d+):(\\d+):\\s+(warning|error):\\s+(.)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "ESP-IDF: Clean",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "fullclean"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "ESP-IDF: Flash",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "-p",
+                "${config:idf.port}",
+                "-b",
+                "${config:idf.baudRate}",
+                "flash"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "dependsOn": "ESP-IDF: Build"
+        },
+        {
+            "label": "ESP-IDF: Monitor",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "-p",
+                "${config:idf.port}",
+                "-b",
+                "${config:idf.baudRate}",
+                "monitor"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "isBackground": true
+        },
+        {
+            "label": "ESP-IDF: Build and Flash",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "ESP-IDF: Build",
+                "ESP-IDF: Flash"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "ESP-IDF: Build",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "-p",
+                "${config:idf.port}",
+                "-b",
+                "${config:idf.baudRate}",
+                "build"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": {
+                "owner": "cpp",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.):(\\d+):(\\d+):\\s+(warning|error):\\s+(.)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "ESP-IDF: Clean",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "fullclean"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "ESP-IDF: Flash",
+            "type": "shell",
+            "command": "${config:idf.pythonBinPath}",
+            "args": [
+                "${config:idf.espIdfPath}/tools/idf.py",
+                "-p",
+                "${config:idf.port}",
+                "-b",
+                "${config:idf.baudRate}",
+                "flash"
+            ],
+            "group": "build"
+        },
+        {
+            "label": "ESP32: Setup and Build",
+            "type": "shell",
+            "command": "setup_and_build.bat",
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": ["$gcc"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "ESP32: Build (IDF)",
+            "type": "shell",
+            "command": "idf.py",
+            "args": ["build"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": ["$gcc"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "ESP32: Flash (IDF)",
+            "type": "shell",
+            "command": "idf.py",
+            "args": ["-p", "COM3", "flash"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "dependsOn": "ESP32: Build (IDF)",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "ESP32: Monitor (IDF)",
+            "type": "shell",
+            "command": "idf.py",
+            "args": ["-p", "COM3", "monitor"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "new"
+            },
+            "isBackground": true,
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "ESP32: Clean (IDF)",
+            "type": "shell",
+            "command": "idf.py",
+            "args": ["fullclean"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always"
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+    ]
+}
