@@ -52,7 +52,8 @@
         "C:/Users/henri/esp-idf/components/esp_event/include",
         "C:/Users/henri/esp-idf/components/esp_netif/include",
         "C:/Users/henri/esp-idf/components/esp_wifi/include",
-        "C:/Users/henri/esp-idf/components/esp_driver_spi/include"
+        "C:/Users/henri/esp-idf/components/esp_driver_spi/include",
+        "C:/Users/henri/esp-idf/components/nvs_flash/include"
       ],
       "defines": [
         "ESP_PLATFORM",

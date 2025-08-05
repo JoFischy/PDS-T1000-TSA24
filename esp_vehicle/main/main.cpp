@@ -17,6 +17,7 @@
 #include "esp_now.h"
 #include "esp_log.h"
 #include "esp_wifi_types.h"
+#include "nvs_flash.h"
 #include "esp_timer.h"
 
 // TAG für ESP-LOG
@@ -24,19 +25,20 @@ static const char* TAG = "ESP_NOW_VEHICLE";
 
 // MAC-Adressen der anderen Fahrzeuge (Platzhalter)
 static uint8_t vehicle_mac_1[] = {0x48, 0xCA, 0x43, 0x2E, 0x34, 0x44}; //Erste Mac_Adresse
-static uint8_t vehicle_mac_2[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //Zweite Mac_Adresse
+static uint8_t vehicle_mac_2[] = {0x74, 0x4D, 0xBD, 0xA1, 0xBF, 0x04}; //Zweite Mac_Adresse, Test Fahrzeug
 static uint8_t vehicle_mac_3[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //Dritte Mac_Adresse
 static uint8_t vehicle_mac_4[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; //Vierte Mac_Adresse
 
+/*
 // Broadcast MAC-Adresse für das Senden an alle Geräte
 static uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-/**
+
  * @brief Struktur für Fahrzeugdaten
  * 
  * Diese Struktur enthält alle wichtigen Informationen eines Fahrzeugs,
  * die über ESP-NOW an andere Fahrzeuge gesendet werden.
- */
+
 typedef struct {
     uint8_t vehicle_id;     // Eindeutige Fahrzeug-ID (1-4)
     float speed;            // Geschwindigkeit in km/h
@@ -64,7 +66,7 @@ static vehicle_data_t my_vehicle = {
  * 
  * @param tx_info Sender-Information (WiFi TX Info)
  * @param status Sendestatus (ESP_NOW_SEND_SUCCESS oder ESP_NOW_SEND_FAIL)
- */
+ 
 static void on_data_sent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
     if (status == ESP_NOW_SEND_SUCCESS) {
         ESP_LOGI(TAG, "Nachricht erfolgreich gesendet");
@@ -82,7 +84,7 @@ static void on_data_sent(const wifi_tx_info_t *tx_info, esp_now_send_status_t st
  * @param recv_info Empfänger-Informationen
  * @param data Empfangene Daten
  * @param data_len Länge der empfangenen Daten
- */
+ 
 static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int data_len) {
     if (data_len != sizeof(vehicle_data_t)) {
         ESP_LOGW(TAG, "Ungültige Datenlänge empfangen: %d", data_len);
@@ -110,7 +112,7 @@ static void on_data_recv(const esp_now_recv_info_t *recv_info, const uint8_t *da
  * - ESP-NOW Protokoll
  * - Callback-Funktionen
  * - Broadcast-Peer für das Senden an alle Fahrzeuge
- */
+ 
 void init_esp_now() {
     ESP_LOGI(TAG, "Initialisiere ESP-NOW...");
     
@@ -152,7 +154,7 @@ void init_esp_now() {
  * 
  * Diese Funktion sendet die aktuellen Fahrzeugdaten per ESP-NOW
  * an alle anderen Fahrzeuge im Netzwerk.
- */
+ 
 void send_vehicle_data() {
     // Aktuelle Zeit als Zeitstempel setzen
     my_vehicle.timestamp = esp_timer_get_time() / 1000; // Millisekunden
@@ -177,7 +179,7 @@ void send_vehicle_data() {
  * @param direction Neue Richtung
  * @param x_pos Neue X-Position
  * @param y_pos Neue Y-Position
- */
+ 
 void update_vehicle_data(float speed, float direction, float x_pos, float y_pos) {
     my_vehicle.speed = speed;
     my_vehicle.direction = direction;
@@ -193,7 +195,7 @@ void update_vehicle_data(float speed, float direction, float x_pos, float y_pos)
  * 
  * Dieser Task läuft kontinuierlich und sendet in regelmäßigen Abständen
  * die Fahrzeugdaten an andere Fahrzeuge.
- */
+ 
 void esp_now_task(void *parameter) {
     TickType_t last_wake_time = xTaskGetTickCount();
     const TickType_t frequency = pdMS_TO_TICKS(1000); // Senden alle 1000ms
@@ -219,12 +221,11 @@ void esp_now_task(void *parameter) {
     }
 }
 
-/**
+
  * @brief Hauptfunktion der Anwendung
  * 
  * Diese Funktion wird beim Start des ESP32 aufgerufen und
  * initialisiert das komplette ESP-NOW System.
- */
 extern "C" {
     void app_main() {
         ESP_LOGI(TAG, "ESP-NOW Fahrzeug-Kommunikation gestartet");
@@ -236,5 +237,51 @@ extern "C" {
         xTaskCreate(esp_now_task, "esp_now_task", 4096, NULL, 5, NULL);
         
         ESP_LOGI(TAG, "Alle Tasks gestartet - System läuft");
+    }
+}*/
+
+// Callback beim Sendeversuch
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+    ESP_LOGI(TAG, "Send status: %s", status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+}
+
+extern "C" void app_main() {
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    // WLAN im Station-Modus starten (kein echtes WLAN nötig)
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    // ESP-NOW initialisieren
+    ESP_ERROR_CHECK(esp_now_init());
+    ESP_ERROR_CHECK(esp_now_register_send_cb(OnDataSent));
+
+    // Peer hinzufügen (Broadcast)
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+    peerInfo.channel = 0;  
+    peerInfo.encrypt = false;
+
+    if (!esp_now_is_peer_exist(broadcastAddress)) {
+        ESP_ERROR_CHECK(esp_now_add_peer(&peerInfo));
+    }
+
+    // Nachricht in Schleife senden
+    while(1) {
+        const char *msg = "Hallo von ESP32!";
+        esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)msg, strlen(msg));
+
+        if (result == ESP_OK) {
+            ESP_LOGI(TAG, "Nachricht gesendet");
+        } else {
+            ESP_LOGE(TAG, "Fehler beim Senden: %d", result);
+        }
+
+        // Warte 2 Sekunden vor der nächsten Nachricht
+        vTaskDelay(2000 / portTICK_PERIOD_MS);
     }
 }
