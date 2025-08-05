@@ -430,6 +430,74 @@ class SimpleCoordinateDetector:
         
         return cpp_objects
 
+    def process_frame_with_display(self):
+        """Verarbeite einen Frame und zeige Ergebnisse an"""
+        if self.cap is None:
+            return []
+        
+        ret, frame = self.cap.read()
+        if not ret:
+            return []
+        
+        self.get_trackbar_values()
+        cropped_frame, crop_bounds = self.crop_frame(frame)
+        detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
+        
+        # Speichere Koordinaten für eventuelle JSON-Ausgabe
+        if detected_objects:
+            self.save_coordinates_for_cpp(detected_objects, crop_width, crop_height)
+        
+        # Visualisierung für Debug
+        left, top, right, bottom = crop_bounds
+        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 3)
+        cv2.putText(frame, "ERKENNUNGSBEREICH", (left, top - 10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Zeichne erkannte Objekte
+        for obj in detected_objects:
+            pos_cropped = obj['position_px']
+            pos_original = (pos_cropped[0] + left, pos_cropped[1] + top)
+            coords = obj['normalized_coords']
+            
+            cv2.circle(frame, pos_original, 8, (0, 255, 255), 3)
+            
+            info_text = f"{obj['classified_color']}: ({coords[0]},{coords[1]})"
+            cv2.putText(frame, info_text, (pos_original[0] + 12, pos_original[1] - 12), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
+        
+        # Status anzeigen
+        cv2.putText(frame, f"OBJEKTE: {len(detected_objects)}", 
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
+                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        # Zeige Fenster
+        cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Crop-Bereich", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Koordinaten-Erkennung", 640, 480)
+        cv2.resizeWindow("Crop-Bereich", 640, 480)
+        cv2.moveWindow("Koordinaten-Erkennung", 100, 100)
+        cv2.moveWindow("Crop-Bereich", 800, 100)
+        
+        cv2.imshow("Koordinaten-Erkennung", frame)
+        cv2.imshow("Crop-Bereich", cropped_frame)
+        cv2.waitKey(1)  # Non-blocking
+        
+        # Konvertiere für C++ Format
+        cpp_objects = []
+        for obj in detected_objects:
+            cpp_obj = {
+                'id': obj['id'],
+                'classified_color': obj['classified_color'],
+                'normalized_coords': obj['normalized_coords'],
+                'area': obj['area'],
+                'crop_width': crop_width,
+                'crop_height': crop_height
+            }
+            cpp_objects.append(cpp_obj)
+        
+        return cpp_objects
+
     def cleanup(self):
         """Aufräumen"""
         if self.cap:

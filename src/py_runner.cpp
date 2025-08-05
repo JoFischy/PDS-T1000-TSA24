@@ -78,7 +78,7 @@ std::vector<DetectedObject> runPythonDetection() {
                         obj.id = (int)PyLong_AsLong(id);
                     }
                     
-                    // Get normalized coordinates
+                    // Get normalized coordinates - Python returns tuple
                     PyObject* coords = PyDict_GetItemString(item, "normalized_coords");
                     if (coords && PyTuple_Check(coords) && PyTuple_Size(coords) == 2) {
                         obj.coordinates.x = (float)PyFloat_AsDouble(PyTuple_GetItem(coords, 0));
@@ -97,7 +97,7 @@ std::vector<DetectedObject> runPythonDetection() {
                         obj.area = (float)PyFloat_AsDouble(area);
                     }
                     
-                    // Get crop dimensions
+                    // Get crop dimensions - now from the object itself
                     PyObject* crop_width = PyDict_GetItemString(item, "crop_width");
                     if (crop_width) {
                         obj.crop_width = (float)PyFloat_AsDouble(crop_width);

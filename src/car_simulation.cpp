@@ -55,25 +55,41 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
     front_points.clear();
     identification_points.clear();
     
-    // Convert detected objects to simulation points
+    // Convert detected objects to simulation points mit direkten Pixel-Koordinaten
     for (size_t i = 0; i < detected_objects.size(); i++) {
         const auto& obj = detected_objects[i];
         
-        // Convert to field coordinates
-        int field_col, field_row;
-        cameraToField(obj, field_transform, field_col, field_row);
+        // Convert to window pixel coordinates for fullscreen display
+        float window_x, window_y;
+        cameraToWindow(obj, field_transform, window_x, window_y);
         
         if (obj.color == "Front") {
-            front_points.emplace_back(field_col, field_row, true, i);
+            front_points.emplace_back((int)window_x, (int)window_y, true, i);
         } else if (obj.color.find("Heck") == 0) {
             // Extract number from "Heck1", "Heck2", etc.
             int heck_id = 0;
             if (obj.color.length() > 4) {
                 heck_id = obj.color[4] - '1'; // Convert "1", "2", etc. to 0, 1, etc.
             }
-            identification_points.emplace_back(field_col, field_row, false, heck_id);
+            identification_points.emplace_back((int)window_x, (int)window_y, false, heck_id);
         }
     }
+}
+
+// Helper function für Koordinatenumrechnung - gesamte Fläche = Crop-Bereich
+void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y) {
+    if (obj.crop_width <= 0 || obj.crop_height <= 0) {
+        window_x = window_y = 0;
+        return;
+    }
+    
+    // Normalisiere Kamera-Koordinaten (0.0 bis 1.0)
+    float norm_x = obj.coordinates.x / obj.crop_width;
+    float norm_y = obj.coordinates.y / obj.crop_height;
+    
+    // Mappe direkt auf die gesamte Fensterfläche (gesamte Fläche = Crop-Bereich)
+    window_x = norm_x * transform.field_width;
+    window_y = norm_y * transform.field_height;
 }
 
 void CarSimulation::cameraToField(const DetectedObject& obj, const FieldTransform& transform, int& field_col, int& field_row) {
@@ -233,98 +249,96 @@ void CarSimulation::update(float deltaTime) {
 }
 
 void CarSimulation::renderField() {
-    // Draw field boundary
-    Rectangle field_rect = {
-        field_offset.x,
-        field_offset.y,
-        FIELD_WIDTH * scale_x,
-        FIELD_HEIGHT * scale_y
-    };
+    // Keine Spielfeld-Rahmen mehr - gesamte weiße Fläche = Crop-Bereich
+    // Optional: Raster für Orientierung (sehr dezent)
+    int currentWidth = GetScreenWidth();
+    int currentHeight = GetScreenHeight();
     
-    DrawRectangleRec(field_rect, LIGHTGRAY);
-    DrawRectangleLinesEx(field_rect, 2, BLACK);
-    
-    // Draw field dimensions
-    DrawText(TextFormat("Field: %dx%d", FIELD_WIDTH, FIELD_HEIGHT), 
-             field_offset.x, field_offset.y - 25, 20, BLACK);
+    // Sehr dezentes Raster alle 100 Pixel
+    for (int x = 0; x < currentWidth; x += 100) {
+        DrawLine(x, 0, x, currentHeight, LIGHTGRAY);
+    }
+    for (int y = 0; y < currentHeight; y += 100) {
+        DrawLine(0, y, currentWidth, y, LIGHTGRAY);
+    }
 }
 
 void CarSimulation::renderPoints() {
-    // Render front points (red circles)
+    // Render front points (große rote Kreise auf weißem Hintergrund)
     for (const auto& point : front_points) {
         if (point.is_valid) {
-            Vector2 screen_pos = {
-                field_offset.x + point.x * scale_x,
-                field_offset.y + point.y * scale_y
-            };
-            DrawCircleV(screen_pos, 4, RED);
-            DrawText(TextFormat("F%d", point.id), screen_pos.x + 6, screen_pos.y - 6, 12, RED);
+            Vector2 screen_pos = { (float)point.x, (float)point.y };
+            DrawCircleV(screen_pos, 12, RED);
+            DrawCircleLinesV(screen_pos, 12, MAROON);
+            DrawText(TextFormat("FRONT-%d", point.id), screen_pos.x + 15, screen_pos.y - 15, 18, MAROON);
         }
     }
     
-    // Render identification points (blue squares)
+    // Render identification points (große blaue Quadrate auf weißem Hintergrund)
     for (const auto& point : identification_points) {
         if (point.is_valid) {
-            Vector2 screen_pos = {
-                field_offset.x + point.x * scale_x,
-                field_offset.y + point.y * scale_y
-            };
-            DrawRectangle(screen_pos.x - 3, screen_pos.y - 3, 6, 6, BLUE);
-            DrawText(TextFormat("I%d", point.id), screen_pos.x + 6, screen_pos.y - 6, 12, BLUE);
+            Vector2 screen_pos = { (float)point.x, (float)point.y };
+            DrawRectangle(screen_pos.x - 8, screen_pos.y - 8, 16, 16, BLUE);
+            DrawRectangleLinesEx({screen_pos.x - 8, screen_pos.y - 8, 16, 16}, 2, DARKBLUE);
+            DrawText(TextFormat("HECK-%d", point.id), screen_pos.x + 15, screen_pos.y - 15, 18, DARKBLUE);
         }
     }
 }
 
 void CarSimulation::renderCars() {
-    // Draw lines connecting paired points
+    // Render cars (connections between paired points) - auf weißem Hintergrund
     for (const auto& car : cars) {
-        if (car.front_point && car.identification_point && car.is_stable) {
-            Vector2 front_screen = {
-                field_offset.x + car.front_point->x * scale_x,
-                field_offset.y + car.front_point->y * scale_y
-            };
-            Vector2 id_screen = {
-                field_offset.x + car.identification_point->x * scale_x,
-                field_offset.y + car.identification_point->y * scale_y
-            };
+        if (car.is_stable && car.front_point && car.identification_point && 
+            car.front_point->is_valid && car.identification_point->is_valid) {
             
-            // Draw connection line
-            DrawLineEx(id_screen, front_screen, 2, GREEN);
+            // Direkte Pixel-Koordinaten verwenden
+            Vector2 front_screen = { (float)car.front_point->x, (float)car.front_point->y };
+            Vector2 id_screen = { (float)car.identification_point->x, (float)car.identification_point->y };
             
-            // Draw direction arrow
-            float arrow_length = 15;
+            // Zeichne Verbindungslinie (gut sichtbar auf weiß)
+            DrawLineEx(id_screen, front_screen, 5, DARKGREEN);
+            
+            // Zeichne Richtungspfeil
+            float arrow_length = 30;
             float angle_rad = car.direction * M_PI / 180.0f;
             Vector2 arrow_end = {
                 (float)(front_screen.x + arrow_length * sin(angle_rad)),
                 (float)(front_screen.y - arrow_length * cos(angle_rad))
             };
             
-            DrawLineEx(front_screen, arrow_end, 3, ORANGE);
+            DrawLineEx(front_screen, arrow_end, 6, ORANGE);
             
-            // Draw car center and info
+            // Zeichne Fahrzeug-Zentrum und Info
             Vector2 center = {
                 (front_screen.x + id_screen.x) / 2,
                 (front_screen.y + id_screen.y) / 2
             };
             
-            DrawCircleV(center, 3, GREEN);
-            DrawText(TextFormat("Car%d: %d°", car.car_id, car.direction), 
-                     center.x + 8, center.y - 8, 10, GREEN);
+            DrawCircleV(center, 8, DARKGREEN);
+            DrawText(TextFormat("CAR-%d: %d°", car.car_id, car.direction), 
+                     center.x + 20, center.y - 20, 20, DARKGREEN);
         }
     }
 }
 
 void CarSimulation::renderUI() {
-    // Status information
+    // Status-Informationen für Vollbild (größere Schrift)
     int stable_cars = 0;
     for (const auto& car : cars) {
         if (car.is_stable) stable_cars++;
     }
     
-    DrawText(TextFormat("Cars detected: %d/%d", stable_cars, NUM_CARS), 10, 10, 20, GREEN);
-    DrawText(TextFormat("Front points: %d", (int)front_points.size()), 10, 35, 16, RED);
-    DrawText(TextFormat("ID points: %d", (int)identification_points.size()), 10, 55, 16, BLUE);
-    DrawText(TextFormat("Distance: %.1f (±%.1f)", car_point_distance, distance_buffer), 10, 75, 16, BLACK);
+    int currentWidth = GetScreenWidth();
+    int currentHeight = GetScreenHeight();
+    
+    // Obere Statusleiste mit schwarzem Hintergrund
+    DrawRectangle(0, 0, currentWidth, UI_HEIGHT, BLACK);
+    
+    DrawText(TextFormat("ERKANNTE FAHRZEUGE: %d/%d", stable_cars, NUM_CARS), 10, 10, 28, GREEN);
+    DrawText(TextFormat("Front-Punkte: %d", (int)front_points.size()), 10, 40, 20, RED);
+    DrawText(TextFormat("Heck-Punkte: %d", (int)identification_points.size()), 200, 40, 20, BLUE);
+    DrawText(TextFormat("Distanz: %.1f (±%.1f)", car_point_distance, distance_buffer), 400, 40, 20, WHITE);
+    DrawText(TextFormat("Bildschirm: %dx%d", currentWidth, currentHeight), currentWidth - 200, 10, 20, YELLOW);
 }
 
 bool CarSimulation::shouldClose() {

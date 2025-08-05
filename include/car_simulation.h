@@ -8,17 +8,17 @@
 // Forward declaration for DetectedObject from Vehicle.h
 struct DetectedObject;
 
-// Constants
+// Constants für Vollbild-Modus
 const int FIELD_WIDTH = 182;
 const int FIELD_HEIGHT = 93;
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
+const int WINDOW_WIDTH = 1920;  // Vollbild-Breite (wird dynamisch angepasst)
+const int WINDOW_HEIGHT = 1080; // Vollbild-Höhe (wird dynamisch angepasst)
 const int NUM_CARS = 4;
 const float DEFAULT_CAR_POINT_DISTANCE = 10.0f; // Default distance between front and identification points
 const float DISTANCE_BUFFER = 3.0f; // Buffer for distance matching
 const float PAIRING_STABILITY_THRESHOLD = 20.0f; // Minimum distance before reassigning pairs
-const int FIELD_SIZE = 10;       // Größe eines quadratischen Feldes in Pixeln (4x kleiner)
-const int UI_HEIGHT = 80;        // Höhe für Status-UI oben
+const int FIELD_SIZE = 15;       // Größere Felder für Vollbild
+const int UI_HEIGHT = 100;       // Größere UI für Vollbild
 
 // Spielfeld-zu-Fenster Transformation Structure
 struct FieldTransform {
@@ -75,7 +75,10 @@ private:
     void calculateCarDirections();
     float calculateDistance(const Point& p1, const Point& p2);
     int calculateAngle(const Point& from, const Point& to); // Changed to return int
+    
+    // Helper functions for coordinate conversion
     void cameraToField(const DetectedObject& obj, const FieldTransform& transform, int& field_col, int& field_row);
+    void cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y);
     
 public:
     CarSimulation();

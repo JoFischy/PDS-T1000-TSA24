@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Main Program",
+            "name": "Run PDS-T1000-TSA24",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/main.exe",
@@ -20,7 +20,19 @@
                     "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "Build Main"
+            "preLaunchTask": "Build PDS-T1000-TSA24"
+        },
+        {
+            "name": "Run without Debug",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": true,
+            "preLaunchTask": "Build PDS-T1000-TSA24"
         },
         {
             "name": "Run Farberkennung (Python)",
