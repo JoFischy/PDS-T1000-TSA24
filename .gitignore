@@ -51,7 +51,6 @@ Makefile
 .idea/
 
 # Local configuration files
-src/py_runner.cpp
 CMakeLists.txt
 .vscode/tasks.json
 

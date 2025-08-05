@@ -441,3 +441,44 @@ class SimpleCoordinateDetector:
 if __name__ == "__main__":
     detector = SimpleCoordinateDetector()
     detector.run_detection()
+
+# === GLOBALE FUNKTIONEN FÜR C++ INTEGRATION ===
+_global_detector = None
+
+def initialize_detector():
+    """Initialisiere den Detektor (von C++ aufgerufen)"""
+    global _global_detector
+    try:
+        _global_detector = SimpleCoordinateDetector()
+        success = _global_detector.initialize_camera()
+        if success:
+            _global_detector.create_trackbars()
+            print("Kamera und Farberkennung initialisiert")
+            return True
+        else:
+            print("Fehler: Kamera konnte nicht initialisiert werden")
+            return False
+    except Exception as e:
+        print(f"Fehler bei Initialisierung: {e}")
+        return False
+
+def detect_objects():
+    """Erkenne Objekte und gib sie als Liste zurück (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector is None:
+        print("Detektor nicht initialisiert!")
+        return []
+    
+    try:
+        return _global_detector.process_frame_with_display()
+    except Exception as e:
+        print(f"Fehler bei Objekterkennung: {e}")
+        return []
+
+def cleanup_detector():
+    """Räume den Detektor auf (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector:
+        _global_detector.cleanup()
+        _global_detector = None
+        print("Detektor aufgeräumt")
