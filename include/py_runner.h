@@ -3,14 +3,8 @@
 #include <vector>
 #include "Vehicle.h"
 
-// Initialize Python interpreter (call once at startup)
-void initialize_python();
-
-// === Neue Koordinaten-Erkennung ===
-// Initialize coordinate detector using new Farberkennung.py
-bool initialize_coordinate_detector();
-
-// Get detected objects with normalized coordinates
+// === KOORDINATEN-ERKENNUNG ===
+// Get detected objects with normalized coordinates (mit automatischer Initialisierung)
 std::vector<DetectedObject> get_detected_coordinates();
 
 // Cleanup coordinate detector resources

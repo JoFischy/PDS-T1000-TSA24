@@ -3,6 +3,7 @@
 #include <Python.h>
 
 static bool python_initialized = false;
+static bool detector_initialized = false;
 
 bool initializePython() {
     if (python_initialized) return true;
@@ -28,6 +29,55 @@ void cleanupPython() {
     if (python_initialized) {
         Py_Finalize();
         python_initialized = false;
+        detector_initialized = false;
+    }
+}
+
+bool initializeDetector() {
+    if (detector_initialized) return true;
+    
+    if (!initializePython()) {
+        return false;
+    }
+    
+    try {
+        // Import Farberkennung module
+        PyObject* pModule = PyImport_ImportModule("Farberkennung");
+        if (!pModule) {
+            PyErr_Print();
+            return false;
+        }
+        
+        // Get the initialization function
+        PyObject* pFunc = PyObject_GetAttrString(pModule, "initialize_detector");
+        if (!pFunc || !PyCallable_Check(pFunc)) {
+            PyErr_Print();
+            Py_DECREF(pModule);
+            return false;
+        }
+        
+        // Call the initialization function
+        PyObject* pResult = PyObject_CallObject(pFunc, nullptr);
+        bool success = false;
+        if (pResult) {
+            success = PyObject_IsTrue(pResult);
+            Py_DECREF(pResult);
+        }
+        
+        Py_DECREF(pFunc);
+        Py_DECREF(pModule);
+        
+        if (success) {
+            detector_initialized = true;
+            std::cout << "Python Detektor erfolgreich initialisiert!" << std::endl;
+        } else {
+            std::cout << "Python Detektor Initialisierung fehlgeschlagen!" << std::endl;
+        }
+        
+        return success;
+    } catch (...) {
+        std::cerr << "Exception during detector initialization" << std::endl;
+        return false;
     }
 }
 
@@ -125,61 +175,14 @@ std::vector<DetectedObject> runPythonDetection() {
     return objects;
 }
 
-// Wrapper functions to match the header interface
-void initialize_python() {
-    initializePython();
-}
-
-bool initialize_coordinate_detector() {
-    if (!initializePython()) {
-        return false;
+std::vector<DetectedObject> get_detected_coordinates() {
+    // Initialisiere Detektor beim ersten Aufruf
+    if (!detector_initialized) {
+        if (!initializeDetector()) {
+            return std::vector<DetectedObject>();
+        }
     }
     
-    try {
-        // Import Farberkennung module
-        PyObject* pModule = PyImport_ImportModule("Farberkennung");
-        if (!pModule) {
-            PyErr_Print();
-            return false;
-        }
-        
-        // Get the initialization function
-        PyObject* pFunc = PyObject_GetAttrString(pModule, "initialize_detector");
-        if (!pFunc || !PyCallable_Check(pFunc)) {
-            PyErr_Print();
-            Py_DECREF(pModule);
-            return false;
-        }
-        
-        // Call the initialization function
-        PyObject* pResult = PyObject_CallObject(pFunc, nullptr);
-        bool success = false;
-        
-        if (pResult) {
-            success = PyObject_IsTrue(pResult);
-            Py_DECREF(pResult);
-        } else {
-            PyErr_Print();
-        }
-        
-        Py_DECREF(pFunc);
-        Py_DECREF(pModule);
-        
-        if (success) {
-            std::cout << "Kamera und Farberkennung erfolgreich initialisiert!" << std::endl;
-        } else {
-            std::cerr << "Fehler: Kamera konnte nicht initialisiert werden!" << std::endl;
-        }
-        
-        return success;
-        
-    } catch (...) {
-        std::cerr << "Exception during detector initialization" << std::endl;
-        return false;
-    }
-}
-
-std::vector<DetectedObject> get_detected_coordinates() {
     return runPythonDetection();
 }
 

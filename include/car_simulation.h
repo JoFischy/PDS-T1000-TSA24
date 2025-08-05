@@ -69,6 +69,11 @@ private:
     float car_point_distance; // Configurable distance between car points
     float distance_buffer;   // Buffer for distance matching
     
+    // Fullscreen management
+    bool is_fullscreen;
+    int windowed_width, windowed_height;
+    int windowed_pos_x, windowed_pos_y;
+    
     // Private methods
     void pairPointsToCars();
     void stablePairPointsToCars(); // New stable pairing method
@@ -100,6 +105,12 @@ public:
     void setDistanceBuffer(float buffer) { distance_buffer = buffer; }
     float getCarPointDistance() const { return car_point_distance; }
     float getDistanceBuffer() const { return distance_buffer; }
+    
+    // Fullscreen management methods
+    void toggleFullscreen();
+    void setFullscreen(bool fullscreen);
+    bool isFullscreen() const { return is_fullscreen; }
+    void updateFieldTransformForCurrentScreen(FieldTransform& transform);
     
     // Getters for external access
     const std::vector<Car>& getCars() const { return cars; }

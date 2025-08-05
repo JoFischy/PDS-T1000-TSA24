@@ -10,24 +10,26 @@
 
 // Implementation of FieldTransform::calculate method
 void FieldTransform::calculate(int window_width, int window_height) {
-    // Verfügbare Fläche für das Spielfeld
+    // GESAMTE Fensterfläche nutzen - KEIN UI_HEIGHT Abzug mehr!
     int available_width = window_width;
-    int available_height = window_height - UI_HEIGHT;
+    int available_height = window_height;  // Komplett ohne UI-Abzug
     
     // Berechne Anzahl quadratischer Felder die reinpassen
     field_cols = available_width / FIELD_SIZE;
     field_rows = available_height / FIELD_SIZE;
     
-    // Tatsächliche Spielfeld-Dimensionen
-    field_width = field_cols * FIELD_SIZE;
-    field_height = field_rows * FIELD_SIZE;
+    // Tatsächliche Spielfeld-Dimensionen = GESAMTE Fensterfläche
+    field_width = window_width;   // Komplette Breite
+    field_height = window_height; // Komplette Höhe
     
-    // Zentrierung berechnen
-    offset_x = (window_width - field_width) / 2.0f;
-    offset_y = UI_HEIGHT + (available_height - field_height) / 2.0f;
+    // Kein Offset - nutze die gesamte Fläche
+    offset_x = 0;
+    offset_y = 0;
 }
 
-CarSimulation::CarSimulation() : time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), distance_buffer(DISTANCE_BUFFER) {
+CarSimulation::CarSimulation() : time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), distance_buffer(DISTANCE_BUFFER), 
+                                 is_fullscreen(false), windowed_width(WINDOW_WIDTH), windowed_height(WINDOW_HEIGHT), 
+                                 windowed_pos_x(100), windowed_pos_y(100) {
     // Calculate scaling factors to fit the field in the window
     scale_x = (float)(WINDOW_WIDTH - 200) / FIELD_WIDTH;  // Leave space for UI
     scale_y = (float)(WINDOW_HEIGHT - 100) / FIELD_HEIGHT; // Leave space for UI
@@ -322,25 +324,131 @@ void CarSimulation::renderCars() {
 }
 
 void CarSimulation::renderUI() {
-    // Status-Informationen für Vollbild (größere Schrift)
-    int stable_cars = 0;
-    for (const auto& car : cars) {
-        if (car.is_stable) stable_cars++;
-    }
-    
+    // Komplett weißes Bild - KEINE schwarzen UI-Balken mehr!
     int currentWidth = GetScreenWidth();
     int currentHeight = GetScreenHeight();
     
-    // Obere Statusleiste mit schwarzem Hintergrund
-    DrawRectangle(0, 0, currentWidth, UI_HEIGHT, BLACK);
+    // Koordinaten-Anzeige in den Ecken (schwarzer Text auf weißem Hintergrund)
+    // Oben links: (0,0)
+    DrawText("(0,0)", 5, 5, 20, BLACK);
     
-    DrawText(TextFormat("ERKANNTE FAHRZEUGE: %d/%d", stable_cars, NUM_CARS), 10, 10, 28, GREEN);
-    DrawText(TextFormat("Front-Punkte: %d", (int)front_points.size()), 10, 40, 20, RED);
-    DrawText(TextFormat("Heck-Punkte: %d", (int)identification_points.size()), 200, 40, 20, BLUE);
-    DrawText(TextFormat("Distanz: %.1f (±%.1f)", car_point_distance, distance_buffer), 400, 40, 20, WHITE);
-    DrawText(TextFormat("Bildschirm: %dx%d", currentWidth, currentHeight), currentWidth - 200, 10, 20, YELLOW);
+    // Oben rechts: (max_x, 0)
+    const char* top_right = TextFormat("(%d,0)", currentWidth-1);
+    int tr_width = MeasureText(top_right, 20);
+    DrawText(top_right, currentWidth - tr_width - 5, 5, 20, BLACK);
+    
+    // Unten links: (0, max_y)
+    const char* bottom_left = TextFormat("(0,%d)", currentHeight-1);
+    DrawText(bottom_left, 5, currentHeight - 25, 20, BLACK);
+    
+    // Unten rechts: (max_x, max_y)
+    const char* bottom_right = TextFormat("(%d,%d)", currentWidth-1, currentHeight-1);
+    int br_width = MeasureText(bottom_right, 20);
+    DrawText(bottom_right, currentWidth - br_width - 5, currentHeight - 25, 20, BLACK);
+    
+    // Minimale Status-Info nur im Fenstermodus (nicht im Vollbild!)
+    if (!is_fullscreen) {
+        int stable_cars = 0;
+        for (const auto& car : cars) {
+            if (car.is_stable) stable_cars++;
+        }
+        
+        // Sehr kleine Info in der Mitte oben (nur im Fenstermodus)
+        const char* status = TextFormat("Autos: %d/%d | F11/F=Vollbild | V=Monitor2 | M=Verschieben | ESC=Ende", stable_cars, NUM_CARS);
+        int status_width = MeasureText(status, 14);
+        DrawText(status, (currentWidth - status_width) / 2, 5, 14, DARKGRAY);
+    }
+    // Im Vollbildmodus: KEINE störenden Texte - nur Koordinaten!
 }
 
 bool CarSimulation::shouldClose() {
     return WindowShouldClose();
+}
+
+void CarSimulation::toggleFullscreen() {
+    if (is_fullscreen) {
+        // Wechsel zu Fenstermodus
+        setFullscreen(false);
+    } else {
+        // Wechsel zu Vollbildmodus
+        setFullscreen(true);
+    }
+}
+
+void CarSimulation::setFullscreen(bool fullscreen) {
+    // Robuste Vollbild-Umschaltung mit mehreren Methoden
+    bool currently_fullscreen = IsWindowFullscreen();
+    
+    if (fullscreen && !currently_fullscreen) {
+        // Speichere aktuelle Fensterposition und -größe
+        windowed_pos_x = GetWindowPosition().x;
+        windowed_pos_y = GetWindowPosition().y;
+        windowed_width = GetScreenWidth();
+        windowed_height = GetScreenHeight();
+        
+        printf("=== VOLLBILD AKTIVIERUNG ===\n");
+        printf("Von: %dx%d bei (%d,%d)\n", windowed_width, windowed_height, windowed_pos_x, windowed_pos_y);
+        
+        // Methode 1: Direkter ToggleFullscreen
+        printf("Versuche Methode 1: ToggleFullscreen...\n");
+        ToggleFullscreen();
+        
+        // Prüfe ob es funktioniert hat
+        if (IsWindowFullscreen()) {
+            is_fullscreen = true;
+            printf("✅ Vollbild aktiviert! Neue Größe: %dx%d\n", GetScreenWidth(), GetScreenHeight());
+        } else {
+            printf("❌ Methode 1 fehlgeschlagen. Versuche Methode 2...\n");
+            
+            // Methode 2: Manuell auf Monitor-Größe setzen
+            int monitor = GetCurrentMonitor();
+            int monitor_width = GetMonitorWidth(monitor);
+            int monitor_height = GetMonitorHeight(monitor);
+            Vector2 monitor_pos = GetMonitorPosition(monitor);
+            
+            printf("Monitor %d: %dx%d bei (%.0f,%.0f)\n", monitor, monitor_width, monitor_height, monitor_pos.x, monitor_pos.y);
+            
+            // Entferne Fensterdekoration und setze auf Monitorgröße
+            SetWindowState(FLAG_WINDOW_UNDECORATED);
+            SetWindowSize(monitor_width, monitor_height);
+            SetWindowPosition((int)monitor_pos.x, (int)monitor_pos.y);
+            
+            is_fullscreen = true;
+            printf("✅ Pseudo-Vollbild aktiviert: %dx%d\n", GetScreenWidth(), GetScreenHeight());
+        }
+        
+    } else if (!fullscreen && currently_fullscreen) {
+        printf("=== FENSTERMODUS AKTIVIERUNG ===\n");
+        
+        // Wenn echter Vollbildmodus
+        if (IsWindowFullscreen()) {
+            ToggleFullscreen();
+        }
+        
+        // Fensterdekoration wiederherstellen
+        ClearWindowState(FLAG_WINDOW_UNDECORATED);
+        
+        // Ursprüngliche Größe wiederherstellen
+        SetWindowSize(windowed_width, windowed_height);
+        SetWindowPosition(windowed_pos_x, windowed_pos_y);
+        
+        is_fullscreen = false;
+        printf("✅ Fenstermodus wiederhergestellt: %dx%d bei (%d,%d)\n", 
+               windowed_width, windowed_height, windowed_pos_x, windowed_pos_y);
+    } else {
+        printf("Vollbild-Status bereits korrekt: %s\n", currently_fullscreen ? "Vollbild" : "Fenster");
+    }
+}
+
+void CarSimulation::updateFieldTransformForCurrentScreen(FieldTransform& transform) {
+    int currentWidth = GetScreenWidth();
+    int currentHeight = GetScreenHeight();
+    
+    // Update transform für aktuellen Bildschirm - GESAMTE Fensterfläche nutzen
+    transform.field_width = currentWidth;
+    transform.field_height = currentHeight;
+    transform.offset_x = 0;
+    transform.offset_y = 0;
+    
+    // Keine UI-Bereiche mehr abziehen - komplettes weißes Fenster!
 }
