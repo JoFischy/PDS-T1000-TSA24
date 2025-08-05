@@ -43,6 +43,7 @@ CMakeFiles/
 cmake_install.cmake
 CTestTestfile.cmake
 Makefile
+MakeFile
 *.cmake
 
 # IDE files
@@ -73,3 +74,4 @@ Thumbs.db
 
 # Logs
 *.log
+
