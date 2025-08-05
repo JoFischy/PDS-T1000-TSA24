@@ -1,18 +1,45 @@
 {
-  "timestamp": 1754299373.6547728,
+  "timestamp": 1754400338.9992938,
   "crop_area": {
-    "width": 369,
-    "height": 247
+    "width": 540,
+    "height": 380
   },
   "objects": [
     {
-      "id": 25,
+      "id": 28,
+      "color": "Heck1",
+      "coordinates": {
+        "x": 39.0,
+        "y": 261.0
+      },
+      "area": 92.5
+    },
+    {
+      "id": 185,
+      "color": "Heck4",
+      "coordinates": {
+        "x": 528.0,
+        "y": 8.0
+      },
+      "area": 299.5
+    },
+    {
+      "id": 140,
       "color": "Heck3",
       "coordinates": {
-        "x": 150.0,
-        "y": 153.0
+        "x": 81.0,
+        "y": 44.0
       },
-      "area": 136.5
+      "area": 93.0
+    },
+    {
+      "id": 30,
+      "color": "Heck2",
+      "coordinates": {
+        "x": 112.0,
+        "y": 277.0
+      },
+      "area": 894.0
     }
   ]
 }

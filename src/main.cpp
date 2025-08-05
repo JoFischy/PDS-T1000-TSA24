@@ -2,10 +2,12 @@
 #include "../include/py_runner.h"
 #include "../include/Vehicle.h"
 #include "../include/car_simulation.h"
+#include "../include/uart_communication.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 // Konvertiert Kamera-Koordinaten zu Spielfeld-Koordinaten (Ganzzahl-Snap)
 void cameraToField(const DetectedObject& obj, const FieldTransform& transform, int& field_col, int& field_row) {
@@ -44,8 +46,16 @@ int main() {
             return 1;
         }
         
+        // Initialize UART communication for ESP32
+        UARTCommunication uart("COM5");
+        bool uart_connected = uart.initialize();
+        if (!uart_connected) {
+            std::cout << "Warnung: UART Verbindung zu ESP32 auf COM5 fehlgeschlagen" << std::endl;
+            std::cout << "Das Programm läuft weiter, aber Koordinaten werden nicht an ESP32 gesendet" << std::endl;
+        }
+        
         // Initialize Raylib window
-        InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "PDS-T1000-TSA24 Car Detection - 182x93 Field");
+        InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "PDS-T1000-TSA24 Car Detection - 182x93 Field + UART");
         SetTargetFPS(60);
         
         // Create car simulation
@@ -65,9 +75,15 @@ int main() {
         
         std::cout << "=== PDS-T1000-TSA24 CAR DETECTION SYSTEM ===" << std::endl;
         std::cout << "Field: " << FIELD_WIDTH << "x" << FIELD_HEIGHT << " mit echten Koordinaten" << std::endl;
+        std::cout << "UART: " << (uart_connected ? "ESP32 verbunden auf COM5" : "ESP32 nicht verbunden") << std::endl;
         std::cout << "ESC = Beenden | F11 = Vollbild umschalten" << std::endl;
         std::cout << "Kamera-Fenster für Crop-Anpassung werden geöffnet" << std::endl;
+        std::cout << "UART sendet Heck2-Koordinaten an ESP32 für ESP-NOW" << std::endl;
         std::cout << "=============================================" << std::endl;
+        
+        // Timer für UART-Übertragung (alle 200ms)
+        auto last_uart_send = std::chrono::steady_clock::now();
+        const auto uart_interval = std::chrono::milliseconds(200);
         
         while (!WindowShouldClose()) {
             if (IsKeyPressed(KEY_ESCAPE)) {
@@ -83,6 +99,28 @@ int main() {
             // Hole aktuelle Koordinaten von der Farberkennung
             std::vector<DetectedObject> detected_objects = get_detected_coordinates();
             
+            // Suche nach Heck2 Objekt für UART-Übertragung
+            DetectedObject* heck2_object = nullptr;
+            for (auto& obj : detected_objects) {
+                if (obj.color == "Heck2") {
+                    heck2_object = &obj;
+                    break;
+                }
+            }
+            
+            // UART-Übertragung der Heck2-Koordinaten (alle 200ms)
+            auto now = std::chrono::steady_clock::now();
+            if (uart_connected && heck2_object && 
+                (now - last_uart_send) >= uart_interval) {
+                
+                // Sende echte Heck2-Koordinaten
+                bool sent = uart.sendHeck2Coordinates(heck2_object->coordinates.x, 
+                                                     heck2_object->coordinates.y);
+                if (sent) {
+                    last_uart_send = now;
+                }
+            }
+            
             // Update car simulation with real detected objects
             car_simulation.updateFromDetectedObjects(detected_objects, field_transform);
             car_simulation.update(deltaTime);
@@ -97,8 +135,9 @@ int main() {
             car_simulation.renderUI();
             
             // Additional info overlay
-            DrawText("PDS-T1000-TSA24 - Real-time Car Detection", 10, WINDOW_HEIGHT - 40, 16, WHITE);
-            DrawText("ESC=Exit | F11=Fullscreen | Camera windows for crop adjustment", 10, WINDOW_HEIGHT - 20, 12, LIGHTGRAY);
+            DrawText("PDS-T1000-TSA24 - Real-time Car Detection + UART ESP32", 10, WINDOW_HEIGHT - 40, 16, WHITE);
+            std::string uart_status = uart_connected ? "UART: COM5 Connected - Sending Heck2 coords" : "UART: COM5 Disconnected";
+            DrawText(uart_status.c_str(), 10, WINDOW_HEIGHT - 20, 12, uart_connected ? GREEN : RED);
             
             EndDrawing();
         }

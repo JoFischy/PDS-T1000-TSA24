@@ -57,19 +57,36 @@ class SimpleCoordinateDetector:
     def initialize_camera(self):
         """Kamera initialisieren"""
         try:
-            for camera_index in [0, 1, 2]:
-                print(f"Versuche Kamera {camera_index}...")
-                self.cap = cv2.VideoCapture(camera_index)
-                
-                if self.cap.isOpened():
-                    ret, frame = self.cap.read()
-                    if ret and frame is not None:
-                        print(f"OK Kamera bereit (Index: {camera_index})")
-                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        return True
-                    else:
-                        self.cap.release()
+            # Erweiterte Kamera-Index Liste mit 1 als erste Option (richtige Kamera)
+            camera_indices = [1, 0, 2, 3, 4, 5]
+            backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+            
+            # Teste verschiedene Kamera-Indizes mit verschiedenen Backends
+            for camera_index in camera_indices:
+                for backend in backends:
+                    try:
+                        print(f"Versuche Kamera {camera_index} mit Backend {backend}...")
+                        self.cap = cv2.VideoCapture(camera_index, backend)
+                        
+                        if self.cap.isOpened():
+                            ret, frame = self.cap.read()
+                            if ret and frame is not None:
+                                print(f"OK Kamera bereit (Index: {camera_index}, Backend: {backend})")
+                                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduziere Buffer für niedrigere Latenz
+                                return True
+                            else:
+                                self.cap.release()
+                        else:
+                            if self.cap:
+                                self.cap.release()
+                    except Exception as e:
+                        print(f"Backend {backend} für Kamera {camera_index} fehlgeschlagen: {e}")
+                        if self.cap:
+                            self.cap.release()
+            
+            print("Keine funktionierende Kamera gefunden!")
             return False
         except Exception as e:
             print(f"Kamera-Fehler: {e}")

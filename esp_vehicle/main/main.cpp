@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -18,10 +19,15 @@
 #include "esp_now.h"
 #include "esp_log.h"
 #include "esp_wifi_types.h"
+#include "esp_mac.h"
 #include "nvs_flash.h"
 #include "esp_timer.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
+
+// MAC address formatting macros
+#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
+#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
 
 // TAG für ESP-LOG
 static const char* TAG = "ESP_NOW_VEHICLE";
@@ -43,6 +49,7 @@ typedef struct {
     float x;
     float y;
     uint32_t timestamp;
+    char vehicle_type[8];  // "HECK2" oder "OTHER"
 } coordinate_data_t;
 
 // Callback beim Sendeversuch
@@ -53,7 +60,12 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 // Callback beim Datenempfang
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
     ESP_LOGI(TAG, "Received %d bytes from " MACSTR, len, MAC2STR(recv_info->src_addr));
-    // Hier können empfangene Daten verarbeitet werden
+    
+    if (len == sizeof(coordinate_data_t)) {
+        coordinate_data_t* received_coords = (coordinate_data_t*)incomingData;
+        ESP_LOGI(TAG, "Received coordinates: %s X=%.2f, Y=%.2f, timestamp=%" PRIu32, 
+                 received_coords->vehicle_type, received_coords->x, received_coords->y, received_coords->timestamp);
+    }
 }
 
 // UART Initialisierung
@@ -64,7 +76,11 @@ void init_uart() {
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .rx_flow_ctrl_thresh = 122,
         .source_clk = UART_SCLK_DEFAULT,
+        .flags = {
+            .backup_before_sleep = 0
+        }
     };
     
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM, BUF_SIZE * 2, 0, 0, NULL, 0));
@@ -74,7 +90,7 @@ void init_uart() {
     ESP_LOGI(TAG, "UART initialized");
 }
 
-// UART Daten parsen (Format: "X:12.34;Y:56.78;")
+// UART Daten parsen (Format: "HECK2:X:12.34;Y:56.78;" oder "X:12.34;Y:56.78;")
 bool parse_coordinates(const char* data, coordinate_data_t* coords) {
     char* x_pos = strstr(data, "X:");
     char* y_pos = strstr(data, "Y:");
@@ -86,6 +102,11 @@ bool parse_coordinates(const char* data, coordinate_data_t* coords) {
         return true;
     }
     return false;
+}
+
+// Prüfe ob es HECK2-Daten sind
+bool is_heck2_data(const char* data) {
+    return strstr(data, "HECK2:") != NULL;
 }
 
 // UART Task - läuft kontinuierlich und empfängt serielle Daten
@@ -105,12 +126,21 @@ void uart_task(void *pvParameters) {
             if (parse_coordinates((char*)data, &coords)) {
                 ESP_LOGI(TAG, "Parsed coordinates: X=%.2f, Y=%.2f", coords.x, coords.y);
                 
-                // Koordinaten über ESP-NOW an andere Fahrzeuge senden
-                esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
-                if (result == ESP_OK) {
-                    ESP_LOGI(TAG, "Coordinates sent via ESP-NOW");
+                // Prüfe ob es HECK2-Daten sind
+                if (is_heck2_data((char*)data)) {
+                    strcpy(coords.vehicle_type, "HECK2");
+                    ESP_LOGI(TAG, "HECK2 data detected - forwarding to test vehicle");
+                    
+                    // HECK2-Koordinaten über ESP-NOW an Test-Fahrzeug (vehicle_mac_2) senden
+                    esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
+                    if (result == ESP_OK) {
+                        ESP_LOGI(TAG, "HECK2 coordinates sent to test vehicle: X=%.2f, Y=%.2f", coords.x, coords.y);
+                    } else {
+                        ESP_LOGE(TAG, "Error sending HECK2 coordinates: %s", esp_err_to_name(result));
+                    }
                 } else {
-                    ESP_LOGE(TAG, "Error sending coordinates: %s", esp_err_to_name(result));
+                    strcpy(coords.vehicle_type, "OTHER");
+                    ESP_LOGI(TAG, "Regular coordinates (not HECK2) - not forwarding");
                 }
             } else {
                 ESP_LOGW(TAG, "Failed to parse coordinates from: %s", (char*)data);
