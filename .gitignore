@@ -1,34 +1,75 @@
 # Build directories
 build/
-esp_vehicle/build/
-main/build/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
 
-# Executables
-*.exe
-*.bin
-*.elf
+# Executable files
+main.exe
+main
 
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
-# ESP-IDF specific
-sdkconfig.old
-.bin_timestamp
+# Temporary files
+coordinates.json
+*.tmp
+*.log
+Kamera.py
 
-# VS Code
-.vscode/settings.json
-
-# Python virtual environment
+# Virtual environments
 .venv/
 venv/
+env/
 
-# CMake
+# Visual Studio files
+*.vcxproj.user
+*.vcxproj.filters
+*.sln.docstates
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake generated files
 CMakeCache.txt
 CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.cmake
 
-# Ninja
-.ninja_log
+# IDE files
+.vs/
+.vscode/settings.json
+.idea/
 
-# Log files
+# Local configuration files
+src/py_runner.cpp
+CMakeLists.txt
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Libraries
+*.lib
+*.a
+*.dll
+*.so
+*.dylib
+
+# Logs
 *.log
