@@ -47,13 +47,12 @@ Makefile
 
 # IDE files
 .vs/
-.vscode/settings.json
+.vscode/
 .idea/
 
 # Local configuration files
 src/py_runner.cpp
 CMakeLists.txt
-.vscode/
 
 # OS files
 Thumbs.db
