@@ -96,6 +96,25 @@ bool UARTCommunication::sendCoordinates(float x, float y) {
     return true;
 }
 
+bool UARTCommunication::sendMessage(const std::string& message) {
+    if (!isConnected || hSerial == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    
+    DWORD bytesWritten;
+    BOOL result = WriteFile((HANDLE)hSerial, message.c_str(), static_cast<DWORD>(message.size()), &bytesWritten, NULL);
+    
+    if (!result) {
+        std::cerr << "Fehler beim Schreiben der UART Nachricht" << std::endl;
+        return false;
+    }
+    
+    // Buffer leeren um sicherzustellen dass Daten gesendet werden
+    FlushFileBuffers((HANDLE)hSerial);
+    
+    return bytesWritten == message.size();
+}
+
 bool UARTCommunication::sendHeck2Coordinates(float x, float y) {
     if (!isConnected) {
         return false;

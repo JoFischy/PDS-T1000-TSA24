@@ -91,41 +91,60 @@ void init_uart() {
     ESP_LOGI(TAG, "UART initialized");
 }
 
-// UART Daten parsen (Format: "HECK1:X:12.34;Y:56.78;" oder "HECK1:ERROR;" oder "X:12.34;Y:56.78;")
+// UART Daten parsen (Neues Format: "COORD:Heck1:269.00,171.00\n")
 bool parse_coordinates(const char* data, coordinate_data_t* coords) {
-    char* x_pos = strstr(data, "X:");
-    char* y_pos = strstr(data, "Y:");
-    char* error_pos = strstr(data, "ERROR");
-    
-    // Prüfe auf Fehlercode
-    if (error_pos) {
-        coords->x = -999.0f;  // Fehlercode für X
-        coords->y = -999.0f;  // Fehlercode für Y
-        coords->timestamp = esp_timer_get_time() / 1000; // ms
-        return true;
+    // Erwarte Format: "COORD:Heck1:269.00,171.00"
+    if (strncmp(data, "COORD:", 6) != 0) {
+        return false;
     }
     
-    if (x_pos && y_pos) {
-        coords->x = atof(x_pos + 2);
-        coords->y = atof(y_pos + 2);
-        coords->timestamp = esp_timer_get_time() / 1000; // ms
-        return true;
+    const char* heck_start = data + 6;  // Nach "COORD:"
+    const char* coord_start = strchr(heck_start, ':');
+    if (!coord_start) {
+        return false;
     }
-    return false;
+    
+    // Extrahiere Heck-ID (z.B. "Heck1")
+    size_t heck_len = coord_start - heck_start;
+    if (heck_len >= sizeof(coords->vehicle_type)) {
+        heck_len = sizeof(coords->vehicle_type) - 1;
+    }
+    strncpy(coords->vehicle_type, heck_start, heck_len);
+    coords->vehicle_type[heck_len] = '\0';
+    
+    // Parse Koordinaten: "269.00,171.00"
+    coord_start++;  // Überspringe ':'
+    const char* comma_pos = strchr(coord_start, ',');
+    if (!comma_pos) {
+        return false;
+    }
+    
+    coords->x = atof(coord_start);
+    coords->y = atof(comma_pos + 1);
+    coords->timestamp = esp_timer_get_time() / 1000; // ms
+    
+    return true;
 }
 
-// Extrahiere Heck-ID aus den Daten (z.B. "HECK1:" -> "HECK1")
+// Extrahiere Heck-ID aus den Daten (Format: "COORD:Heck1:269.00,171.00")
 std::string extract_heck_id(const char* data) {
-    const char* colon_pos = strchr(data, ':');
-    if (colon_pos && colon_pos > data) {
-        return std::string(data, colon_pos - data);
+    if (strncmp(data, "COORD:", 6) != 0) {
+        return "";
     }
-    return "";
+    
+    const char* heck_start = data + 6;  // Nach "COORD:"
+    const char* coord_start = strchr(heck_start, ':');
+    if (!coord_start) {
+        return "";
+    }
+    
+    return std::string(heck_start, coord_start - heck_start);
 }
 
 // Prüfe ob es HECK2-Daten sind
 bool is_heck2_data(const char* data) {
-    return strstr(data, "HECK2:") != NULL;
+    std::string heck_id = extract_heck_id(data);
+    return heck_id == "Heck2";
 }
 
 // UART Task - läuft kontinuierlich und empfängt serielle Daten

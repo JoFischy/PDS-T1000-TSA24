@@ -58,7 +58,7 @@ class SimpleCoordinateDetector:
         """Kamera initialisieren"""
         try:
             # Erweiterte Kamera-Index Liste mit 1 als erste Option (richtige Kamera)
-            camera_indices = [1, 0, 2, 3, 4, 5]
+            camera_indices = [0, 1, 2, 3, 4, 5]
             backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
             
             # Teste verschiedene Kamera-Indizes mit verschiedenen Backends

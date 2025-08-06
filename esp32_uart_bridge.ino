@@ -1,5 +1,5 @@
 /*
- * ESP32 UART zu ESP-NOW Bridge für Heck2-Koordinaten
+ * ESP32 UART zu ESP-NOW Bridge für ALLE Koordinaten
  * Empfängt UART-Daten und sendet sie über ESP-NOW an Testfahrzeug
  */
 
@@ -14,7 +14,7 @@ typedef struct {
     float x;
     float y;
     uint32_t timestamp;
-    char vehicle_type[8];  // "HECK2"
+    char vehicle_type[8];  // "Heck1", "Heck2", "Front", etc.
 } coordinate_data_t;
 
 void setup() {
@@ -46,31 +46,38 @@ void setup() {
         return;
     }
     
-    Serial.println("ESP-NOW initialized, waiting for UART data...");
+    Serial.println("ESP-NOW initialized, waiting for LIVE coordinate data...");
 }
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
     if (status == ESP_NOW_SEND_SUCCESS) {
-        Serial.println("✓ Data sent successfully to test vehicle");
+        Serial.println("✓ Coordinates sent successfully to test vehicle");
     } else {
-        Serial.println("✗ Failed to send data");
+        Serial.println("✗ Failed to send coordinates");
     }
 }
 
 bool parseCoordinates(String data, coordinate_data_t* coords) {
-    // Parse "HECK2:X:110.000000;Y:275.000000;"
-    if (data.indexOf("HECK2:") >= 0) {
-        int xPos = data.indexOf("X:");
-        int yPos = data.indexOf("Y:");
+    // Parse neues Format: "COORD:Heck1:269.00,171.00" oder "COORD:Heck2:110.00,275.00"
+    if (data.startsWith("COORD:")) {
+        int firstColon = data.indexOf(":", 6);  // Nach "COORD:"
+        int secondColon = data.indexOf(":", firstColon + 1);
+        int comma = data.indexOf(",");
         
-        if (xPos >= 0 && yPos >= 0) {
-            String xStr = data.substring(xPos + 2, data.indexOf(";", xPos));
-            String yStr = data.substring(yPos + 2, data.indexOf(";", yPos));
+        if (firstColon >= 0 && secondColon >= 0 && comma >= 0) {
+            // Extrahiere Fahrzeugtyp (z.B. "Heck1", "Heck2")
+            String vehicleType = data.substring(6, secondColon);  // Von "COORD:" bis zweiter ":"
+            
+            // Extrahiere Koordinaten
+            String xStr = data.substring(secondColon + 1, comma);
+            String yStr = data.substring(comma + 1);
             
             coords->x = xStr.toFloat();
             coords->y = yStr.toFloat();
             coords->timestamp = millis();
-            strcpy(coords->vehicle_type, "HECK2");
+            
+            // Kopiere Fahrzeugtyp
+            vehicleType.toCharArray(coords->vehicle_type, sizeof(coords->vehicle_type));
             
             return true;
         }
@@ -89,13 +96,13 @@ void loop() {
             
             coordinate_data_t coords;
             if (parseCoordinates(receivedData, &coords)) {
-                Serial.printf("Parsed HECK2 coordinates: X=%.2f, Y=%.2f\n", coords.x, coords.y);
+                Serial.printf("Parsed %s coordinates: X=%.2f, Y=%.2f\n", coords.vehicle_type, coords.x, coords.y);
                 
                 // Sende an Testfahrzeug
                 esp_err_t result = esp_now_send(testVehicleMAC, (uint8_t*)&coords, sizeof(coords));
                 
                 if (result == ESP_OK) {
-                    Serial.println("→ Forwarding to test vehicle 74:4D:BD:A1:BF:04");
+                    Serial.printf("→ Forwarded %s to test vehicle 74:4D:BD:A1:BF:04\n", coords.vehicle_type);
                 } else {
                     Serial.printf("Error sending: %s\n", esp_err_to_name(result));
                 }

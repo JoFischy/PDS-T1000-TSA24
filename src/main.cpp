@@ -78,12 +78,11 @@ int main() {
         std::cout << "UART: " << (uart_connected ? "ESP32 verbunden auf COM5" : "ESP32 nicht verbunden") << std::endl;
         std::cout << "ESC = Beenden | F11 = Vollbild umschalten" << std::endl;
         std::cout << "Kamera-Fenster für Crop-Anpassung werden geöffnet" << std::endl;
-        std::cout << "UART sendet Heck2-Koordinaten an ESP32 für ESP-NOW" << std::endl;
+        std::cout << "UART sendet ALLE Koordinaten live an ESP32 für ESP-NOW" << std::endl;
         std::cout << "=============================================" << std::endl;
         
-        // Timer für UART-Übertragung (alle 200ms)
+        // Timer für UART-Übertragung (alle 100ms für Live-Updates)
         auto last_uart_send = std::chrono::steady_clock::now();
-        const auto uart_interval = std::chrono::milliseconds(200);
         
         while (!WindowShouldClose()) {
             if (IsKeyPressed(KEY_ESCAPE)) {
@@ -99,26 +98,24 @@ int main() {
             // Hole aktuelle Koordinaten von der Farberkennung
             std::vector<DetectedObject> detected_objects = get_detected_coordinates();
             
-            // Suche nach Heck2 Objekt für UART-Übertragung
-            DetectedObject* heck2_object = nullptr;
-            for (auto& obj : detected_objects) {
-                if (obj.color == "Heck2") {
-                    heck2_object = &obj;
-                    break;
-                }
-            }
-            
-            // UART-Übertragung der Heck2-Koordinaten (alle 200ms)
+            // UART-Übertragung ALLER erkannten Koordinaten (alle 100ms für Live-Update)
             auto now = std::chrono::steady_clock::now();
-            if (uart_connected && heck2_object && 
-                (now - last_uart_send) >= uart_interval) {
+            if (uart_connected && !detected_objects.empty() && 
+                (now - last_uart_send) >= std::chrono::milliseconds(100)) {
                 
-                // Sende echte Heck2-Koordinaten
-                bool sent = uart.sendHeck2Coordinates(heck2_object->coordinates.x, 
-                                                     heck2_object->coordinates.y);
-                if (sent) {
-                    last_uart_send = now;
+                // Sende alle erkannten Objekte an ESP32
+                for (const auto& obj : detected_objects) {
+                    std::string message = "COORD:" + obj.color + ":" + 
+                                        std::to_string(obj.coordinates.x) + "," + 
+                                        std::to_string(obj.coordinates.y) + "\n";
+                    
+                    bool sent = uart.sendMessage(message);
+                    if (sent) {
+                        std::cout << "Gesendet: " << obj.color << " (" << 
+                                     obj.coordinates.x << "," << obj.coordinates.y << ")" << std::endl;
+                    }
                 }
+                last_uart_send = now;
             }
             
             // Update car simulation with real detected objects
@@ -136,7 +133,7 @@ int main() {
             
             // Additional info overlay
             DrawText("PDS-T1000-TSA24 - Real-time Car Detection + UART ESP32", 10, WINDOW_HEIGHT - 40, 16, WHITE);
-            std::string uart_status = uart_connected ? "UART: COM5 Connected - Sending Heck2 coords" : "UART: COM5 Disconnected";
+            std::string uart_status = uart_connected ? "UART: COM5 Connected - Sending ALL coordinates LIVE" : "UART: COM5 Disconnected";
             DrawText(uart_status.c_str(), 10, WINDOW_HEIGHT - 20, 12, uart_connected ? GREEN : RED);
             
             EndDrawing();

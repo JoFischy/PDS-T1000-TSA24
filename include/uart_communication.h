@@ -20,6 +20,7 @@ public:
     ~UARTCommunication();
     
     bool initialize();
+    bool sendMessage(const std::string& message);  // Neue generische Funktion
     bool sendCoordinates(float x, float y);
     bool sendHeck2Coordinates(float x, float y);
     bool sendHeckCoordinates(const std::string& heckId, float x, float y);
