@@ -53,24 +53,33 @@ void Renderer::render(const std::vector<Point>& points, const std::vector<Auto>&
 }
 
 void Renderer::drawPoint(const Point& point, int index, bool isSelected) {
-    Color color;
+    Color color = BLACK;  // All points are now black
     
     if (isSelected) {
-        color = selectedPointColor;
-    } else if (point.type == PointType::FRONT) {
-        color = frontPointColor;  // All front points are blue
-    } else {
-        // For identification points, use different colors based on their pair number
-        color = getIdentificationColor(index / 2);
+        color = selectedPointColor;  // Keep selection color for dragging
     }
 
     // Draw point circle (larger for better visibility)
     DrawCircle(static_cast<int>(point.x), static_cast<int>(point.y), 12, color);
     DrawCircleLines(static_cast<int>(point.x), static_cast<int>(point.y), 12, BLACK);
 
-    // Draw point type label
-    const char* typeText = (point.type == PointType::FRONT) ? "FRONT" : "HECK";
-    DrawText(typeText, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+    // Draw point type label with numbering for Heck points
+    if (point.type == PointType::FRONT) {
+        DrawText("FRONT", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+    } else {
+        // For identification/Heck points, show actual Heck number from color
+        const char* heckText = "HECK";
+        if (!point.color.empty() && point.color.find("Heck") == 0) {
+            static char heckLabel[16];
+            if (point.color == "Heck1") snprintf(heckLabel, sizeof(heckLabel), "HECK 1");
+            else if (point.color == "Heck2") snprintf(heckLabel, sizeof(heckLabel), "HECK 2");
+            else if (point.color == "Heck3") snprintf(heckLabel, sizeof(heckLabel), "HECK 3");
+            else if (point.color == "Heck4") snprintf(heckLabel, sizeof(heckLabel), "HECK 4");
+            else snprintf(heckLabel, sizeof(heckLabel), "HECK ?");
+            heckText = heckLabel;
+        }
+        DrawText(heckText, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+    }
 }
 
 void Renderer::drawAuto(const Auto& auto_) {

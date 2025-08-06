@@ -2,13 +2,13 @@
 #define _USE_MATH_DEFINES
 #include "auto.h"
 #include <cmath>
-
-int Auto::nextId = 1;
+#include <string>
 
 Auto::Auto() : direction(0.0f), valid(false), id(0) {}
 
 Auto::Auto(const Point& idPoint, const Point& fPoint) 
-    : identificationPoint(idPoint), frontPoint(fPoint), valid(true), id(nextId++) {
+    : identificationPoint(idPoint), frontPoint(fPoint), valid(true) {
+    id = extractIdFromColor(idPoint.color);
     calculateCenterAndDirection();
 }
 
@@ -16,6 +16,7 @@ void Auto::updatePoints(const Point& idPoint, const Point& fPoint) {
     identificationPoint = idPoint;
     frontPoint = fPoint;
     valid = true;
+    id = extractIdFromColor(idPoint.color);
     calculateCenterAndDirection();
 }
 
@@ -32,4 +33,16 @@ void Auto::calculateCenterAndDirection() {
     if (direction < 0) {
         direction += 360.0f;
     }
+}
+
+int Auto::extractIdFromColor(const std::string& color) {
+    // Extract number from color string like "Heck1", "Heck2", etc.
+    if (color.find("Heck") == 0 && color.length() > 4) {
+        try {
+            return std::stoi(color.substr(4)); // Extract number after "Heck"
+        } catch (...) {
+            return 0; // Default if parsing fails
+        }
+    }
+    return 0; // Default for unknown colors
 }
