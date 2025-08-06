@@ -11,7 +11,6 @@ private:
     Point center;
     float direction;
     bool valid;
-    static int nextId;
     int id;
 
 public:
@@ -28,12 +27,10 @@ public:
     float getDirection() const { return direction; }
     bool isValid() const { return valid; }
     int getId() const { return id; }
-    
-    // Static method to reset ID counter
-    static void resetIdCounter() { nextId = 1; }
 
 private:
     void calculateCenterAndDirection();
+    int extractIdFromColor(const std::string& color);
 };
 
 #endif

@@ -3,14 +3,16 @@
 #include "auto.h"
 #include "renderer.h"
 #include "py_runner.h"
+#include "coordinate_filter.h"
 #include <algorithm>
 #include <cmath>
 
 #define DEFAULT_CAR_POINT_DISTANCE 12.0f
 #define DISTANCE_BUFFER 4.0f
 
-CarSimulation::CarSimulation() : time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), 
-                                 tolerance(100.0f), distance_buffer(DISTANCE_BUFFER) {
+CarSimulation::CarSimulation() : tolerance(100.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), 
+                                 distance_buffer(DISTANCE_BUFFER),
+                                 coordinateFilter(80.0f, 3.0f, 3) {
     renderer = nullptr;
 }
 
@@ -29,10 +31,10 @@ void CarSimulation::initialize() {
 }
 
 void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>& detected_objects, const FieldTransform& field_transform) {
-    // Clear previous points
-    points.clear();
-
     // Convert detected objects to Points with window coordinates
+    std::vector<Point> rawPoints;
+    std::vector<std::string> colors;
+
     for (size_t i = 0; i < detected_objects.size(); i++) {
         const auto& obj = detected_objects[i];
 
@@ -41,19 +43,23 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
         cameraToWindow(obj, field_transform, window_x, window_y);
 
         if (obj.color == "Front") {
-            points.emplace_back(window_x, window_y, PointType::FRONT);
+            rawPoints.emplace_back(window_x, window_y, PointType::FRONT, obj.color);
+            colors.push_back(obj.color);
         } else if (obj.color.find("Heck") == 0) {
-            points.emplace_back(window_x, window_y, PointType::IDENTIFICATION);
+            rawPoints.emplace_back(window_x, window_y, PointType::IDENTIFICATION, obj.color);
+            colors.push_back(obj.color);
         }
     }
 
-    // Detect vehicles from points
+    // Filter points through coordinate filter to remove outliers
+    points = coordinateFilter.filterAndSmooth(rawPoints, colors);
+
+    // Detect vehicles from filtered points only
     detectVehicles();
 }
 
 void CarSimulation::detectVehicles() {
     detectedAutos.clear();
-    Auto::resetIdCounter();  // Reset ID counter to start from 1
 
     // Create vectors to separate identification and front points
     std::vector<size_t> identificationIndices;
@@ -170,15 +176,15 @@ void FieldTransform::calculate(int window_width, int window_height) {
     // UTILIZE THE ENTIRE WINDOW AREA - NO MORE UI_HEIGHT SUBTRACTION!
     int available_width = window_width;
     int available_height = window_height;  // Completely without UI subtraction
-    
+
     // Calculate the number of square fields that fit
     field_cols = available_width / FIELD_SIZE;
     field_rows = available_height / FIELD_SIZE;
-    
+
     // Actual field dimensions = ENTIRE window area
     field_width = window_width;   // Complete width
     field_height = window_height; // Complete height
-    
+
     // No offset - use the entire area
     offset_x = 0;
     offset_y = 0;

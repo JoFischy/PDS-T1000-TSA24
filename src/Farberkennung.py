@@ -188,17 +188,20 @@ class SimpleCoordinateDetector:
                                 'area': area
                             })
             
-            # Beste Matches pro Farbe filtern
+            # Beste Matches pro Farbe filtern - MAXIMAL 4 Front und je 1 Heck1-4
             heck_colors = ['Heck1', 'Heck2', 'Heck3', 'Heck4']
             used_heck_colors = set()
+            front_count = 0
+            max_front_points = 4
             
             all_candidates.sort(key=lambda x: x['color_distance'])
             
             for candidate in all_candidates:
                 color = candidate['classified_color']
                 
-                if color == 'Front':
+                if color == 'Front' and front_count < max_front_points:
                     detected_objects.append(candidate)
+                    front_count += 1
                 elif color in heck_colors and color not in used_heck_colors:
                     detected_objects.append(candidate)
                     used_heck_colors.add(color)

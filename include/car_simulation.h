@@ -2,22 +2,23 @@
 #define CAR_SIMULATION_H
 
 #include "raylib.h"
-#include "Vehicle.h" // Assuming this is for DetectedObject
+#include "Vehicle.h"
 #include "point.h"
 #include "auto.h"
+#include "coordinate_filter.h"
 #include <vector>
-#include <memory> // Not strictly used in the provided snippet, but good to keep if intended for future use.
+#include <memory>
 
 // Forward declaration for Renderer
 class Renderer;
 
 // Constants for the simulation
-const int FIELD_SIZE = 10;       // Smaller field size for the new system
-const int FIELD_WIDTH = 120;     // New field width
-const int FIELD_HEIGHT = 80;     // New field height
-const int WINDOW_WIDTH = 1200;   // New window width for full-screen layout
-const int WINDOW_HEIGHT = 800;   // New window height for full-screen layout
-const int NUM_CARS = 4;          // Number of cars to simulate
+const int FIELD_SIZE = 10;
+const int FIELD_WIDTH = 120;
+const int FIELD_HEIGHT = 80;
+const int WINDOW_WIDTH = 1200;
+const int WINDOW_HEIGHT = 800;
+const int NUM_CARS = 4;
 
 // Structure to handle field-to-window transformations
 struct FieldTransform {
@@ -35,13 +36,14 @@ struct FieldTransform {
 // Main class for car simulation
 class CarSimulation {
 private:
-    std::vector<Point> points;             // Stores the processed points
-    std::vector<Auto> detectedAutos;       // Stores the detected vehicles as Autos
-    Renderer* renderer;                    // Pointer to the renderer
-    float tolerance;                       // Tolerance for point matching
-    float time_elapsed;                    // Time elapsed in the simulation
-    float car_point_distance;              // Configurable distance between car points
-    float distance_buffer;                 // Buffer for distance matching
+    std::vector<Point> points;
+    std::vector<Auto> detectedAutos;
+    Renderer* renderer;
+    float tolerance;
+    float time_elapsed;
+    float car_point_distance;
+    float distance_buffer;
+    CoordinateFilter coordinateFilter;
 
 public:
     // Constructor and Destructor
