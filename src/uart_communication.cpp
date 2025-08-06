@@ -118,6 +118,80 @@ bool UARTCommunication::sendHeck2Coordinates(float x, float y) {
     return true;
 }
 
+bool UARTCommunication::sendHeckCoordinates(const std::string& heckId, float x, float y) {
+    if (!isConnected || hSerial == INVALID_HANDLE_VALUE) {
+        std::cerr << "UART nicht verbunden für " << heckId << std::endl;
+        return false;
+    }
+    
+    // Format: "HECK1:X:12.34;Y:56.78;\n"
+    std::string data = heckId + ":X:" + std::to_string(x) + ";Y:" + std::to_string(y) + ";\n";
+    
+    DWORD bytesWritten;
+    BOOL result = WriteFile((HANDLE)hSerial, data.c_str(), static_cast<DWORD>(data.size()), &bytesWritten, NULL);
+    
+    if (!result) {
+        std::cerr << "Fehler beim Senden der " << heckId << " Koordinaten" << std::endl;
+        return false;
+    }
+    
+    FlushFileBuffers((HANDLE)hSerial);
+    
+    std::cout << "✓ " << heckId << " → ESP32: X=" << x << ", Y=" << y << " (" << bytesWritten << " bytes)" << std::endl;
+    return true;
+}
+
+bool UARTCommunication::sendHeckError(const std::string& heckId) {
+    if (!isConnected || hSerial == INVALID_HANDLE_VALUE) {
+        std::cerr << "UART nicht verbunden für " << heckId << " Fehler" << std::endl;
+        return false;
+    }
+    
+    // Format: "HECK1:ERROR;\n"
+    std::string data = heckId + ":ERROR;\n";
+    
+    DWORD bytesWritten;
+    BOOL result = WriteFile((HANDLE)hSerial, data.c_str(), static_cast<DWORD>(data.size()), &bytesWritten, NULL);
+    
+    if (!result) {
+        std::cerr << "Fehler beim Senden des " << heckId << " Fehlercodes" << std::endl;
+        return false;
+    }
+    
+    FlushFileBuffers((HANDLE)hSerial);
+    
+    std::cout << "⚠ " << heckId << " → ESP32: ERROR (nicht erkannt)" << std::endl;
+    return true;
+}
+
+bool UARTCommunication::sendAllHeckCoordinates(const std::vector<HeckCoordinate>& hecks) {
+    if (!isConnected) {
+        std::cerr << "UART nicht verbunden für Heck-Batch-Übertragung" << std::endl;
+        return false;
+    }
+    
+    std::cout << "\n=== Sende alle Heck-Koordinaten an ESP32 ===" << std::endl;
+    
+    bool allSuccess = true;
+    for (const auto& heck : hecks) {
+        if (heck.isValid) {
+            if (!sendHeckCoordinates(heck.heckId, heck.x, heck.y)) {
+                allSuccess = false;
+            }
+        } else {
+            if (!sendHeckError(heck.heckId)) {
+                allSuccess = false;
+            }
+        }
+        
+        // Kurze Pause zwischen den Übertragungen
+        Sleep(50); // 50ms Pause
+    }
+    
+    std::cout << "=== Heck-Übertragung abgeschlossen ===\n" << std::endl;
+    return allSuccess;
+}
+
 void UARTCommunication::close() {
     if (hSerial != INVALID_HANDLE_VALUE) {
         CloseHandle((HANDLE)hSerial);

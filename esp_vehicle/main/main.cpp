@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <string>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -90,10 +91,19 @@ void init_uart() {
     ESP_LOGI(TAG, "UART initialized");
 }
 
-// UART Daten parsen (Format: "HECK2:X:12.34;Y:56.78;" oder "X:12.34;Y:56.78;")
+// UART Daten parsen (Format: "HECK1:X:12.34;Y:56.78;" oder "HECK1:ERROR;" oder "X:12.34;Y:56.78;")
 bool parse_coordinates(const char* data, coordinate_data_t* coords) {
     char* x_pos = strstr(data, "X:");
     char* y_pos = strstr(data, "Y:");
+    char* error_pos = strstr(data, "ERROR");
+    
+    // Prüfe auf Fehlercode
+    if (error_pos) {
+        coords->x = -999.0f;  // Fehlercode für X
+        coords->y = -999.0f;  // Fehlercode für Y
+        coords->timestamp = esp_timer_get_time() / 1000; // ms
+        return true;
+    }
     
     if (x_pos && y_pos) {
         coords->x = atof(x_pos + 2);
@@ -102,6 +112,15 @@ bool parse_coordinates(const char* data, coordinate_data_t* coords) {
         return true;
     }
     return false;
+}
+
+// Extrahiere Heck-ID aus den Daten (z.B. "HECK1:" -> "HECK1")
+std::string extract_heck_id(const char* data) {
+    const char* colon_pos = strchr(data, ':');
+    if (colon_pos && colon_pos > data) {
+        return std::string(data, colon_pos - data);
+    }
+    return "";
 }
 
 // Prüfe ob es HECK2-Daten sind
@@ -124,23 +143,70 @@ void uart_task(void *pvParameters) {
             
             // Koordinaten parsen
             if (parse_coordinates((char*)data, &coords)) {
-                ESP_LOGI(TAG, "Parsed coordinates: X=%.2f, Y=%.2f", coords.x, coords.y);
+                std::string heck_id = extract_heck_id((char*)data);
                 
-                // Prüfe ob es HECK2-Daten sind
-                if (is_heck2_data((char*)data)) {
-                    strcpy(coords.vehicle_type, "HECK2");
-                    ESP_LOGI(TAG, "HECK2 data detected - forwarding to test vehicle");
-                    
-                    // HECK2-Koordinaten über ESP-NOW an Test-Fahrzeug (vehicle_mac_2) senden
-                    esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
-                    if (result == ESP_OK) {
-                        ESP_LOGI(TAG, "HECK2 coordinates sent to test vehicle: X=%.2f, Y=%.2f", coords.x, coords.y);
+                if (coords.x == -999.0f && coords.y == -999.0f) {
+                    // Fehlercode erkannt
+                    if (!heck_id.empty()) {
+                        strcpy(coords.vehicle_type, heck_id.c_str());
+                        ESP_LOGW(TAG, "Fehlercode für %s empfangen - Fahrzeug nicht erkannt", heck_id.c_str());
+                        
+                        // Auch Fehlercodes an vehicle_mac_2 senden
+                        esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
+                        if (result == ESP_OK) {
+                            ESP_LOGI(TAG, "%s Fehlercode erfolgreich an vehicle_mac_2 gesendet", heck_id.c_str());
+                        } else {
+                            ESP_LOGE(TAG, "Fehler beim Senden des %s Fehlercodes: %s", 
+                                     heck_id.c_str(), esp_err_to_name(result));
+                        }
                     } else {
-                        ESP_LOGE(TAG, "Error sending HECK2 coordinates: %s", esp_err_to_name(result));
+                        strcpy(coords.vehicle_type, "UNKNOWN");
+                        ESP_LOGW(TAG, "Unbekannter Fehlercode empfangen");
+                        
+                        // Unbekannte Fehlercodes auch senden
+                        esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
+                        if (result == ESP_OK) {
+                            ESP_LOGI(TAG, "Unbekannter Fehlercode an vehicle_mac_2 gesendet");
+                        } else {
+                            ESP_LOGE(TAG, "Fehler beim Senden des unbekannten Fehlercodes: %s", esp_err_to_name(result));
+                        }
                     }
                 } else {
-                    strcpy(coords.vehicle_type, "OTHER");
-                    ESP_LOGI(TAG, "Regular coordinates (not HECK2) - not forwarding");
+                    // Normale Koordinaten
+                    ESP_LOGI(TAG, "Parsed coordinates: X=%.2f, Y=%.2f", coords.x, coords.y);
+                    
+                    // Bestimme Fahrzeugtyp basierend auf Heck-ID oder Fallback
+                    if (!heck_id.empty()) {
+                        strcpy(coords.vehicle_type, heck_id.c_str());
+                        ESP_LOGI(TAG, "%s Koordinaten empfangen - weiterleiten an vehicle_mac_2", heck_id.c_str());
+                        
+                        // Alle Heck-Koordinaten über ESP-NOW an vehicle_mac_2 senden
+                        esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
+                        if (result == ESP_OK) {
+                            ESP_LOGI(TAG, "✓ %s Koordinaten erfolgreich an vehicle_mac_2: X=%.2f, Y=%.2f", 
+                                     heck_id.c_str(), coords.x, coords.y);
+                        } else {
+                            ESP_LOGE(TAG, "✗ Fehler beim Senden der %s Koordinaten: %s", 
+                                     heck_id.c_str(), esp_err_to_name(result));
+                        }
+                    } else {
+                        // Fallback für alte Format-Kompatibilität
+                        if (is_heck2_data((char*)data)) {
+                            strcpy(coords.vehicle_type, "HECK2");
+                            ESP_LOGI(TAG, "HECK2 (legacy format) - weiterleiten an vehicle_mac_2");
+                            
+                            esp_err_t result = esp_now_send(vehicle_mac_2, (uint8_t*)&coords, sizeof(coordinate_data_t));
+                            if (result == ESP_OK) {
+                                ESP_LOGI(TAG, "✓ HECK2 (legacy) Koordinaten erfolgreich an vehicle_mac_2 gesendet");
+                            } else {
+                                ESP_LOGE(TAG, "✗ Fehler beim Senden der HECK2 (legacy) Koordinaten: %s", esp_err_to_name(result));
+                            }
+                        } else {
+                            strcpy(coords.vehicle_type, "OTHER");
+                            ESP_LOGI(TAG, "Normale Koordinaten (kein spezifisches Heck) - NICHT weiterleiten");
+                            // OTHER-Koordinaten werden nicht gesendet - nur Heck-spezifische Daten
+                        }
+                    }
                 }
             } else {
                 ESP_LOGW(TAG, "Failed to parse coordinates from: %s", (char*)data);
@@ -192,6 +258,6 @@ extern "C" void app_main() {
     // Hauptschleife - ESP-NOW Status ausgeben
     while(1) {
         ESP_LOGI(TAG, "System running...");
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(3000 / portTICK_PERIOD_MS);
     }
 }

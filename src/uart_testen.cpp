@@ -1,5 +1,5 @@
 /**
- * @file uart_sender.cpp
+ * @file uart_testen.cpp
  * @brief Windows Serial Communication zum ESP32
  * 
  * Dieses Programm sendet Koordinatendaten über die serielle Schnittstelle
