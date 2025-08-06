@@ -70,5 +70,12 @@ Thumbs.db
 *.so
 *.dylib
 
+# Raylib temporary files
+*.o
+raylib-*.zip
+raylib-prebuilt/
+
 # Logs
 *.log
+
+build.bat
