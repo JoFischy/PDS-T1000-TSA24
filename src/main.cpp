@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <vector>
 #include "car_simulation.h"
@@ -26,30 +27,49 @@ int main(int argc, char* argv[]) {
     // Standard-Fenstergröße
     int screenWidth = 1200;
     int screenHeight = 800;
-    int target_monitor = 0; // Standard: Monitor 1
     
-    // Raylib Monitor-Detection OHNE Fenster zu öffnen
+    // Raylib Monitor-Detection - erst Fenster initialisieren für Monitor-Abfrage
     SetTraceLogLevel(LOG_WARNING); // Reduziere Logs
     
     if (auto_fullscreen_monitor2) {
-        target_monitor = 1; // Monitor 2 - vertraue darauf dass er existiert
-        screenWidth = 1920;  // Feste Werte für Monitor 2
-        screenHeight = 1200;
-        std::cout << "ZIEL: Vollbild auf Monitor 2 (1920x1200)" << std::endl;
-    }
-    
-    // Jetzt das Fenster mit korrekten Einstellungen erstellen
-    if (auto_fullscreen || auto_fullscreen_monitor2) {
-        SetConfigFlags(FLAG_WINDOW_UNDECORATED);
+        std::cout << "=== MONITOR 2 VOLLBILD SETUP ===" << std::endl;
         
-        if (auto_fullscreen_monitor2) {
-            // Spezielle Position für Monitor 2
-            InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
-            SetWindowPosition(1920, 0); // Harte Position für Monitor 2
+        // Normale Fenster-Initialisierung
+        InitWindow(800, 600, "PDS-T1000-TSA24");
+        
+        int monitorCount = GetMonitorCount();
+        std::cout << "Erkannte Monitore: " << monitorCount << std::endl;
+        
+        if (monitorCount >= 2) {
+            // Monitor 2 (Index 1) verwenden
+            Vector2 monitor2Pos = GetMonitorPosition(1);
+            screenWidth = GetMonitorWidth(1);
+            screenHeight = GetMonitorHeight(1);
+            std::cout << "Monitor 2 Position: " << monitor2Pos.x << ", " << monitor2Pos.y << std::endl;
+            std::cout << "Monitor 2 Größe: " << screenWidth << "x" << screenHeight << std::endl;
+            
+            // WICHTIG: Warten bis Fenster bereit ist
+            WaitTime(0.1f);
+            
+            // Schritt 1: Fenster auf Monitor 2 positionieren (weit rechts)
+            SetWindowPosition((int)monitor2Pos.x + 100, (int)monitor2Pos.y + 100);
+            WaitTime(0.1f);
+            
+            // Schritt 2: Fenstergröße anpassen
+            SetWindowSize(screenWidth - 200, screenHeight - 200);
+            WaitTime(0.1f);
+            
+            // Schritt 3: Vollbild aktivieren (sollte jetzt auf Monitor 2 sein)
+            ToggleFullscreen();
+            std::cout << "✅ VOLLBILD AUF MONITOR 2 AKTIVIERT!" << std::endl;
         } else {
-            InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
+            std::cout << "⚠️ Nur " << monitorCount << " Monitor(e) gefunden - verwende Monitor 1" << std::endl;
+            ToggleFullscreen();
         }
-        std::cout << "✅ VOLLBILD AUTOMATISCH AKTIVIERT!" << std::endl;
+    } else if (auto_fullscreen) {
+        InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
+        ToggleFullscreen();
+        std::cout << "✅ VOLLBILD AUF AKTUELLEM MONITOR AKTIVIERT!" << std::endl;
     } else {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE);
         InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
@@ -62,7 +82,7 @@ int main(int argc, char* argv[]) {
     int currentWidth = GetScreenWidth();
     int currentHeight = GetScreenHeight();
     
-    // Create car simulation
+    // Create car simulation with new point system
     CarSimulation car_simulation;
     car_simulation.initialize();
     car_simulation.setCarPointDistance(12.0f);  // Set distance between front and ID points
@@ -77,7 +97,7 @@ int main(int argc, char* argv[]) {
     field_transform.offset_x = 0;                 // Kein Offset - gesamte Fläche nutzen
     field_transform.offset_y = 0;                 // Kein Offset - gesamte Fläche nutzen
     
-    std::cout << "=== PDS-T1000-TSA24 AUTOMATISCHES VOLLBILD ===" << std::endl;
+    std::cout << "=== PDS-T1000-TSA24 PUNKT-FAHRZEUG-ERKENNUNGSSYSTEM ===" << std::endl;
     std::cout << "Gesamte Fensterfläche repräsentiert den Crop-Bereich" << std::endl;
     std::cout << "Fenster: " << currentWidth << "x" << currentHeight << " Pixel" << std::endl;
     std::cout << "" << std::endl;
@@ -87,12 +107,12 @@ int main(int argc, char* argv[]) {
     std::cout << "VOLLBILD AKTUELLER MONITOR: .\\main.exe --fullscreen" << std::endl;
     std::cout << "" << std::endl;
     std::cout << "ESC oder Fenster schließen = Beenden" << std::endl;
-    std::cout << "KEINE TASTEN NÖTIG - alles automatisch!" << std::endl;
+    std::cout << "+/- Tasten = Toleranz anpassen (Debug)" << std::endl;
     std::cout << "=================================================" << std::endl;
     
-    // EINFACHE HAUPTSCHLEIFE OHNE TASTEN-HANDLING
+    // EINFACHE HAUPTSCHLEIFE
     while (!WindowShouldClose()) {
-        // Nur ESC zum Beenden (falls es funktioniert)
+        // Nur ESC zum Beenden
         if (IsKeyPressed(KEY_ESCAPE)) {
             break;
         }
@@ -109,21 +129,8 @@ int main(int argc, char* argv[]) {
         BeginDrawing();
         ClearBackground(WHITE); // Weißer Hintergrund für gesamte Fläche
         
-        // Render Punkte und Autos auf weißem Hintergrund
-        car_simulation.renderPoints();
-        car_simulation.renderCars();
-        
-        // Render minimale UI mit Koordinaten-Anzeige
+        // Render all UI, points, and cars through the integrated renderer
         car_simulation.renderUI();
-        
-        // Debug-Info falls keine Objekte erkannt werden (zentriert)
-        if (detected_objects.empty()) {
-            int currentWidth = GetScreenWidth();
-            int currentHeight = GetScreenHeight();
-            const char* text = "WARTEN AUF KAMERA-DATEN...";
-            int text_width = MeasureText(text, 24);
-            DrawText(text, (currentWidth - text_width) / 2, currentHeight / 2, 24, RED);
-        }
         
         EndDrawing();
     }
