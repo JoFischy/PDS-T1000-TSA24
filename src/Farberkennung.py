@@ -20,6 +20,11 @@ class SimpleCoordinateDetector:
         self.crop_top = 50
         self.crop_bottom = 50
         
+        # Farbmesser-Einstellungen
+        self.color_picker_x = 320  # Mitte des Bildes
+        self.color_picker_y = 240
+        self.color_picker_enabled = 1  # 1 = aktiviert, 0 = deaktiviert
+        
         # Current detection results (for C++ access)
         self.current_detections = []
         self.detection_lock = threading.Lock()
@@ -27,11 +32,11 @@ class SimpleCoordinateDetector:
         
         # Farbdefinitionen (HSV)
         self.color_definitions = {
-            'Front': [109, 237, 240],
-            'Heck1': [14, 245, 254],
-            'Heck2': [152, 195, 165],
-            'Heck3': [20, 252, 244],
-            'Heck4': [80, 234, 140]
+            'Front': [114, 255, 150],
+            'Heck1': [72, 255, 60],
+            'Heck2': [178, 190, 210],
+            'Heck3': [20, 150, 240],
+            'Heck4': [11, 160, 255]
         }
         
         # Toleranz-Einstellungen für jede Farbe
@@ -55,6 +60,11 @@ class SimpleCoordinateDetector:
         cv2.createTrackbar('Crop Oben', 'Einstellungen', self.crop_top, 300, lambda x: None)
         cv2.createTrackbar('Crop Unten', 'Einstellungen', self.crop_bottom, 300, lambda x: None)
         
+        # Farbmesser-Trackbars
+        cv2.createTrackbar('Farbmesser EIN/AUS', 'Einstellungen', self.color_picker_enabled, 1, lambda x: None)
+        cv2.createTrackbar('Farbmesser X', 'Einstellungen', self.color_picker_x, 640, lambda x: None)
+        cv2.createTrackbar('Farbmesser Y', 'Einstellungen', self.color_picker_y, 480, lambda x: None)
+        
         # Toleranz-Schieberegler für jede Farbe
         for color_name in self.color_definitions.keys():
             cv2.createTrackbar(f'Toleranz {color_name}', 'Einstellungen', self.color_tolerances[color_name], 200, lambda x: None)
@@ -66,6 +76,11 @@ class SimpleCoordinateDetector:
         self.crop_right = cv2.getTrackbarPos('Crop Rechts', 'Einstellungen')
         self.crop_top = cv2.getTrackbarPos('Crop Oben', 'Einstellungen')
         self.crop_bottom = cv2.getTrackbarPos('Crop Unten', 'Einstellungen')
+        
+        # Farbmesser-Werte lesen
+        self.color_picker_enabled = cv2.getTrackbarPos('Farbmesser EIN/AUS', 'Einstellungen')
+        self.color_picker_x = cv2.getTrackbarPos('Farbmesser X', 'Einstellungen')
+        self.color_picker_y = cv2.getTrackbarPos('Farbmesser Y', 'Einstellungen')
         
         # Toleranz-Werte für jede Farbe lesen
         for color_name in self.color_definitions.keys():
@@ -106,7 +121,7 @@ class SimpleCoordinateDetector:
         return cropped_frame, (left, top, right, bottom)
 
     def find_closest_color(self, hsv_value):
-        """Finde wahrscheinlichste Farbe mit individueller Toleranz"""
+        """Finde wahrscheinlichste Farbe mit starker Gewichtung auf H-Wert und zirkulärer H-Logik"""
         h, s, v = hsv_value
         closest_color = None
         min_distance = float('inf')
@@ -114,14 +129,26 @@ class SimpleCoordinateDetector:
         for color_name, color_hsv in self.color_definitions.items():
             tolerance = self.color_tolerances[color_name]
             
-            dh = min(abs(h - color_hsv[0]), 360 - abs(h - color_hsv[0]))
+            # H-Wert Distanz (zirkulär für Rot-Bereich)
+            # OpenCV: H = 0-179, aber Rot kann bei 0 UND 179 liegen!
+            dh1 = abs(h - color_hsv[0])
+            dh2 = 180 - dh1  # Alternative über den "Rückweg"
+            dh = min(dh1, dh2)  # Kürzeste zirkuläre Distanz
+            
             ds = abs(s - color_hsv[1])
             dv = abs(v - color_hsv[2])
             
-            distance = (dh * 2) + ds + dv
+            # STARK gewichtete Distanz - H-Wert ist 5x wichtiger
+            # H dominiert die Farbentscheidung, S und V sind weniger wichtig
+            distance = (dh * 5) + (ds * 0.5) + (dv * 0.3)
             
-            # Prüfe ob Farbe innerhalb der individuellen Toleranz liegt
-            if distance <= tolerance and distance < min_distance:
+            # Erweiterte H-Toleranz für Rot-Bereich (H nahe 0 oder 179)
+            if color_hsv[0] <= 20 or color_hsv[0] >= 160:  # Rot-Bereich
+                h_tolerance = min(25, tolerance * 0.5)  # Größere Toleranz für Rot
+            else:
+                h_tolerance = min(15, tolerance * 0.3)  # Standard-Toleranz für andere Farben
+            
+            if dh <= h_tolerance and distance < min_distance:
                 min_distance = distance
                 closest_color = color_name
                 
@@ -140,6 +167,63 @@ class SimpleCoordinateDetector:
         norm_y = max(0.0, min(norm_y, float(crop_height)))
         
         return (round(norm_x, 2), round(norm_y, 2))
+
+    def measure_color_at_position(self, frame, hsv_frame):
+        """Messe Farbe an der gewählten Position und gib RGB/HSV-Werte zurück"""
+        if not self.color_picker_enabled:
+            return None, None, None
+        
+        height, width = frame.shape[:2]
+        
+        # Koordinaten in Bildgrenzen halten
+        x = max(0, min(self.color_picker_x, width - 1))
+        y = max(0, min(self.color_picker_y, height - 1))
+        
+        # BGR (OpenCV) und HSV Werte am Pixel lesen
+        bgr_pixel = frame[y, x]
+        hsv_pixel = hsv_frame[y, x]
+        
+        # BGR zu RGB konvertieren für bessere Verständlichkeit
+        rgb_pixel = (int(bgr_pixel[2]), int(bgr_pixel[1]), int(bgr_pixel[0]))
+        hsv_values = (int(hsv_pixel[0]), int(hsv_pixel[1]), int(hsv_pixel[2]))
+        
+        return (x, y), rgb_pixel, hsv_values
+
+    def draw_color_picker(self, frame, position, rgb_values, hsv_values):
+        """Zeichne Farbmesser-Visualisierung"""
+        if position is None:
+            return
+        
+        x, y = position
+        
+        # Großes Fadenkreuz zeichnen
+        cv2.line(frame, (x-20, y), (x+20, y), (0, 255, 255), 2)
+        cv2.line(frame, (x, y-20), (x, y+20), (0, 255, 255), 2)
+        cv2.circle(frame, (x, y), 25, (0, 255, 255), 2)
+        cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
+        
+        # Textbox für Werte
+        text_x = x + 30
+        text_y = y - 40
+        
+        # Hintergrund für bessere Lesbarkeit
+        cv2.rectangle(frame, (text_x-5, text_y-50), (text_x+280, text_y+20), (0, 0, 0), -1)
+        cv2.rectangle(frame, (text_x-5, text_y-50), (text_x+280, text_y+20), (0, 255, 255), 1)
+        
+        # RGB Werte anzeigen
+        rgb_text = f"RGB: {rgb_values[0]}, {rgb_values[1]}, {rgb_values[2]}"
+        cv2.putText(frame, rgb_text, (text_x, text_y-30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # HSV Werte anzeigen
+        hsv_text = f"HSV: {hsv_values[0]}, {hsv_values[1]}, {hsv_values[2]}"
+        cv2.putText(frame, hsv_text, (text_x, text_y-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Position anzeigen
+        pos_text = f"Pos: ({x}, {y})"
+        cv2.putText(frame, pos_text, (text_x, text_y+10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     def detect_colors(self, cropped_frame):
         """Erkenne Farben und gib normalisierte Koordinaten zurück"""
@@ -267,6 +351,10 @@ class SimpleCoordinateDetector:
             cropped_frame, crop_bounds = self.crop_frame(frame)
             detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
             
+            # Farbmessung für das gesamte Frame (nicht nur crop)
+            hsv_full_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            color_position, rgb_values, hsv_values = self.measure_color_at_position(frame, hsv_full_frame)
+            
             # Speichere Koordinaten für C++
             if detected_objects:
                 if self.save_coordinates_for_cpp(detected_objects, crop_width, crop_height):
@@ -305,6 +393,16 @@ class SimpleCoordinateDetector:
                 cv2.putText(frame, f"{color_name}: Tol={tolerance}", 
                            (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
                 y_offset += 20
+            
+            # Farbmesser zeichnen (falls aktiviert)
+            if self.color_picker_enabled and color_position:
+                self.draw_color_picker(frame, color_position, rgb_values, hsv_values)
+                
+                # Zeige auch in der Konsole (alle 30 Frames um Spam zu vermeiden)
+                frame_count = getattr(self, '_frame_count', 0)
+                self._frame_count = frame_count + 1
+                if self._frame_count % 30 == 0:
+                    print(f"Farbmesser bei ({color_position[0]}, {color_position[1]}): RGB{rgb_values} HSV{hsv_values}")
             
             # Zeige Video mit erkannten Objekten
             cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
@@ -361,79 +459,6 @@ class SimpleCoordinateDetector:
         return cpp_objects
 
     def process_frame_with_display(self):
-        """Verarbeite Frame mit Anzeige für C++ Integration"""
-        if self.cap is None:
-            return []
-        
-        ret, frame = self.cap.read()
-        if not ret:
-            return []
-        
-        self.get_trackbar_values()
-        cropped_frame, crop_bounds = self.crop_frame(frame)
-        detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
-        
-        # Visualisierung
-        left, top, right, bottom = crop_bounds
-        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 3)
-        cv2.putText(frame, "ERKENNUNGSBEREICH", (left, top - 10), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        
-        # Zeichne erkannte Objekte
-        for obj in detected_objects:
-            pos_cropped = obj['position_px']
-            pos_original = (pos_cropped[0] + left, pos_cropped[1] + top)
-            coords = obj['normalized_coords']
-            
-            cv2.circle(frame, pos_original, 8, (0, 255, 255), 3)
-            
-            info_text = f"{obj['classified_color']}: ({coords[0]},{coords[1]})"
-            cv2.putText(frame, info_text, (pos_original[0] + 12, pos_original[1] - 12), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
-        
-        # Status
-        cv2.putText(frame, f"OBJEKTE: {len(detected_objects)}", 
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
-                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        
-        # Toleranz-Anzeige
-        y_offset = 90
-        for color_name, tolerance in self.color_tolerances.items():
-            cv2.putText(frame, f"{color_name}: Tol={tolerance}", 
-                       (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-            y_offset += 20
-        
-        # Zeige Video mit erkannten Objekten
-        cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
-        cv2.namedWindow("Crop-Bereich", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Koordinaten-Erkennung", 640, 480)
-        cv2.resizeWindow("Crop-Bereich", 640, 480)
-        cv2.moveWindow("Koordinaten-Erkennung", 100, 100)
-        cv2.moveWindow("Crop-Bereich", 800, 100)
-        
-        cv2.imshow("Koordinaten-Erkennung", frame)
-        cv2.imshow("Crop-Bereich", cropped_frame)
-        
-        # Force window update
-        cv2.waitKey(1)
-        
-        # Konvertiere für C++ Format
-        cpp_objects = []
-        for obj in detected_objects:
-            cpp_obj = {
-                'id': obj['id'],
-                'classified_color': obj['classified_color'],
-                'normalized_coords': obj['normalized_coords'],
-                'area': obj['area'],
-                'crop_width': crop_width,
-                'crop_height': crop_height
-            }
-            cpp_objects.append(cpp_obj)
-        
-        return cpp_objects
-
-    def process_frame_with_display(self):
         """Verarbeite einen Frame und zeige Ergebnisse an"""
         if self.cap is None:
             return []
@@ -445,6 +470,10 @@ class SimpleCoordinateDetector:
         self.get_trackbar_values()
         cropped_frame, crop_bounds = self.crop_frame(frame)
         detected_objects, crop_width, crop_height = self.detect_colors(cropped_frame)
+        
+        # Farbmessung für das gesamte Frame
+        hsv_full_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        color_position, rgb_values, hsv_values = self.measure_color_at_position(frame, hsv_full_frame)
         
         # Speichere Koordinaten für eventuelle JSON-Ausgabe
         if detected_objects:
@@ -473,6 +502,10 @@ class SimpleCoordinateDetector:
                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        # Farbmesser zeichnen (falls aktiviert)
+        if self.color_picker_enabled and color_position:
+            self.draw_color_picker(frame, color_position, rgb_values, hsv_values)
         
         # Zeige Fenster
         cv2.namedWindow("Koordinaten-Erkennung", cv2.WINDOW_NORMAL)
