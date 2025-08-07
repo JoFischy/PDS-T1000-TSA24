@@ -138,15 +138,15 @@ class SimpleCoordinateDetector:
             ds = abs(s - color_hsv[1])
             dv = abs(v - color_hsv[2])
             
-            # STARK gewichtete Distanz - H-Wert ist 5x wichtiger
-            # H dominiert die Farbentscheidung, S und V sind weniger wichtig
-            distance = (dh * 5) + (ds * 0.5) + (dv * 0.3)
+            # EXTREM gewichtete Distanz - H-Wert ist 10x wichtiger!
+            # H dominiert komplett die Farbentscheidung, S und V sind fast irrelevant
+            distance = (dh * 10) + (ds * 0.3) + (dv * 0.1)
             
-            # Erweiterte H-Toleranz für Rot-Bereich (H nahe 0 oder 179)
+            # Noch strengere H-Toleranz für präzise Farberkennung
             if color_hsv[0] <= 20 or color_hsv[0] >= 160:  # Rot-Bereich
-                h_tolerance = min(25, tolerance * 0.5)  # Größere Toleranz für Rot
+                h_tolerance = min(20, tolerance * 0.4)  # Größere Toleranz für Rot
             else:
-                h_tolerance = min(15, tolerance * 0.3)  # Standard-Toleranz für andere Farben
+                h_tolerance = min(10, tolerance * 0.2)  # Sehr strenge Toleranz für andere Farben
             
             if dh <= h_tolerance and distance < min_distance:
                 min_distance = distance
