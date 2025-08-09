@@ -15,13 +15,17 @@ struct FilteredPoint {
     bool isStable;  // Punkt ist stabil genug für Fahrzeugerkennung
     std::string color;
     int consecutiveOutliers;
+    int consecutiveValidDetections;  // Anzahl aufeinanderfolgender gültiger Erkennungen
+    int requiredConsecutiveDetections;  // Benötigte konsistente Erkennungen für Stabilität
     float stabilityRequirement;  // Sekunden bis Punkt als stabil gilt
     
-    FilteredPoint() : isValid(false), isStable(false), consecutiveOutliers(0), stabilityRequirement(0.5f) {}
+    FilteredPoint() : isValid(false), isStable(false), consecutiveOutliers(0), 
+                     consecutiveValidDetections(0), requiredConsecutiveDetections(3), stabilityRequirement(0.5f) {}
     FilteredPoint(const Point& p, const std::string& c) 
         : point(p), lastUpdate(std::chrono::steady_clock::now()), 
           creationTime(std::chrono::steady_clock::now()),
-          isValid(true), isStable(false), color(c), consecutiveOutliers(0), stabilityRequirement(0.5f) {}
+          isValid(false), isStable(false), color(c), consecutiveOutliers(0), 
+          consecutiveValidDetections(1), requiredConsecutiveDetections(3), stabilityRequirement(0.5f) {}
 };
 
 class CoordinateFilter {
@@ -30,9 +34,10 @@ private:
     float outlierThreshold;        // Maximale Distanz für gültige Updates
     float validityTimeout;         // Sekunden bis Punkt ungültig wird
     int maxConsecutiveOutliers;    // Max Anzahl Ausreißer bevor Punkt ungültig
+    int requiredDetections;        // Benötigte konsistente Erkennungen für Gültigkeit
 
 public:
-    CoordinateFilter(float threshold = 80.0f, float timeout = 3.0f, int maxOutliers = 3);
+    CoordinateFilter(float threshold = 80.0f, float timeout = 3.0f, int maxOutliers = 3, int requiredDet = 3);
     
     // Hauptfunktion: Filtert neue Erkennungen und gibt geglättete Punkte zurück
     std::vector<Point> filterAndSmooth(const std::vector<Point>& newDetections, 
@@ -41,8 +46,10 @@ public:
     // Hilfsfunktionen
     void updatePoint(const Point& newPoint, const std::string& color);
     void removeExpiredPoints();
+    void enforceVehiclePartLimits();  // Begrenzt Anzahl der Fahrzeugteile
     bool isOutlier(const Point& newPoint, const FilteredPoint& existing) const;
     FilteredPoint* findClosestExistingPoint(const Point& newPoint, const std::string& color);
+    std::string getVehiclePartType(const std::string& color) const;  // Extrahiert Typ (heck1->heck, front->front)
     
     // Getter/Setter
     void setOutlierThreshold(float threshold) { outlierThreshold = threshold; }
