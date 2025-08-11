@@ -12,7 +12,7 @@
 
 CarSimulation::CarSimulation() : tolerance(100.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), 
                                  distance_buffer(DISTANCE_BUFFER),
-                                 coordinateFilter(30.0f, 2.0f, 2, 5, 200.0f) {
+                                 coordinateFilter(50.0f, 5.0f, 2, 8, 300.0f) {
     renderer = nullptr;
 }
 

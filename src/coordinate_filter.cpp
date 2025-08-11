@@ -3,10 +3,12 @@
 #include <cmath>
 #include <iostream>
 
-CoordinateFilter::CoordinateFilter(float radius, float timeout, int minDetections, int maxRecent, float movement)
+CoordinateFilter::CoordinateFilter(float radius, float timeout, int minDetections, int maxRecent, float movement,
+                                           float predTime, int maxMissed, float smoothing)
     : detectionRadius(radius), validityTimeout(timeout), 
       minDetectionsForStability(minDetections), maxRecentDetections(maxRecent),
-      movementThreshold(movement) {
+      movementThreshold(movement), predictionTime(predTime), 
+      maxMissedDetections(maxMissed), motionSmoothingFactor(smoothing) {
 }
 
 std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& newDetections, 
@@ -18,6 +20,9 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
     for (size_t i = 0; i < newDetections.size() && i < colors.size(); i++) {
         processDetection(newDetections[i], colors[i]);
     }
+
+    // Generate predictions for missing points
+    generatePredictedPoints();
 
     // Nur stabile und gültige Punkte zurückgeben
     std::vector<Point> result;
@@ -53,7 +58,7 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
                 // Point mit originalem Farbnamen erstellen
                 Point filteredPoint = fp.point;
                 filteredPoint.type = PointType::FRONT;
-                filteredPoint.color = color; // "Front"
+                filteredPoint.color = fp.color; // Verwende gespeicherte originale Farbe
                 result.push_back(filteredPoint);
                 frontCount++;
                 std::cout << "Front-Punkt (" << color << ") hinzugefügt" << std::endl;
@@ -65,7 +70,48 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
 }
 
 void CoordinateFilter::processDetection(const Point& newPoint, const std::string& color) {
-    auto it = stablePoints.find(color);
+    std::string partType = getVehiclePartType(color);
+    std::string actualKey = color; // Standard: verwende die originale Farbe als Schlüssel
+
+    // Für Front-Punkte: Spezielle Behandlung, da alle als "Front" kommen
+    if (partType == "front") {
+        // Suche nach existierendem Front-Punkt in der Nähe
+        std::string nearbyFrontKey = "";
+        for (const auto& [existingColor, fp] : stablePoints) {
+            if (getVehiclePartType(existingColor) == "front" && 
+                fp.point.distanceTo(newPoint) <= detectionRadius) {
+                nearbyFrontKey = existingColor;
+                break;
+            }
+        }
+
+        if (!nearbyFrontKey.empty()) {
+            // Verwende den existierenden Schlüssel
+            actualKey = nearbyFrontKey;
+        } else {
+            // Erstelle neuen eindeutigen Schlüssel für Front-Punkt
+            int frontIndex = 1;
+            while (stablePoints.find("Front_" + std::to_string(frontIndex)) != stablePoints.end()) {
+                frontIndex++;
+            }
+            actualKey = "Front_" + std::to_string(frontIndex);
+
+            // Prüfe maximale Anzahl Front-Punkte (alle, nicht nur stabile)
+            int activeFrontCount = 0;
+            for (const auto& [col, fp] : stablePoints) {
+                if (getVehiclePartType(col) == "front") {
+                    activeFrontCount++;
+                }
+            }
+
+            if (activeFrontCount >= 4) {
+                std::cout << "Bereits 4 Front-Punkte aktiv - neue Detektion ignoriert" << std::endl;
+                return;
+            }
+        }
+    }
+
+    auto it = stablePoints.find(actualKey);
 
     if (it != stablePoints.end()) {
         // Existierender Punkt gefunden
@@ -74,7 +120,7 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
         // Prüfen ob neue Detektion im erlaubten Bereich ist
         if (fp.isStable && !isWithinMovementThreshold(fp.point, newPoint)) {
             // Zu große Bewegung - als Ausreißer ignorieren
-            std::cout << "Ausreißer ignoriert für " << color << " (zu große Bewegung)" << std::endl;
+            std::cout << "Ausreißer ignoriert für " << actualKey << " (zu große Bewegung)" << std::endl;
             return;
         }
 
@@ -88,22 +134,27 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
             fp.recentDetections.erase(fp.recentDetections.begin());
         }
 
+        // Vorherige Position für Motion-Tracking speichern
+        Point oldPosition = fp.point;
+
         // Cluster-Zentrum berechnen und Punkt aktualisieren
         fp.point = calculateClusterCenter(fp.recentDetections);
+
+        // Motion Model aktualisieren (Geschwindigkeit, Beschleunigung)
+        updateMotionModel(fp, fp.point);
+
+        // Reset missed detections counter
+        fp.missedDetections = 0;
 
         // Stabilität prüfen
         updatePointStability(fp);
 
     } else {
-        // Prüfen ob bereits zu viele Punkte dieses Typs existieren
-        std::string partType = getVehiclePartType(color);
-
+        // Für Heck-Punkte: Spezielle Validierung
         if (partType == "heck") {
-            // Für Heck-Punkte: Nur EINEN Punkt pro Heck-Typ (1,2,3,4) erlauben
             // Prüfen ob bereits ein Heck-Punkt mit derselben Nummer existiert
             for (const auto& [existingColor, fp] : stablePoints) {
                 if (getVehiclePartType(existingColor) == "heck") {
-                    // Extrahiere Heck-Nummer aus beiden Farben
                     std::string newHeckType = extractHeckNumber(color);
                     std::string existingHeckType = extractHeckNumber(existingColor);
 
@@ -115,7 +166,7 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
                 }
             }
 
-            // Zusätzlich: Maximal 4 Heck-Punkte insgesamt
+            // Maximal 4 Heck-Punkte insgesamt
             int activeHeckCount = 0;
             for (const auto& [col, fp] : stablePoints) {
                 if (getVehiclePartType(col) == "heck" && (fp.isValid || fp.isStable)) {
@@ -127,25 +178,11 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
                 std::cout << "Bereits 4 Heck-Punkte aktiv - neue Detektion " << color << " ignoriert" << std::endl;
                 return;
             }
-
-        } else if (partType == "front") {
-            // Für Front-Punkte: Maximal 4 erlauben
-            int activeFrontCount = 0;
-            for (const auto& [col, fp] : stablePoints) {
-                if (getVehiclePartType(col) == "front" && (fp.isValid || fp.isStable)) {
-                    activeFrontCount++;
-                }
-            }
-
-            if (activeFrontCount >= 4) {
-                std::cout << "Bereits 4 Front-Punkte aktiv - neue Detektion ignoriert" << std::endl;
-                return;
-            }
         }
 
         // Neuen Punkt erstellen
-        stablePoints[color] = FilteredPoint(newPoint, color);
-        std::cout << "Neuer " << partType << "-Punkt erkannt: " << color << std::endl;
+        stablePoints[actualKey] = FilteredPoint(newPoint, color); // Originale Farbe im FilteredPoint speichern
+        std::cout << "Neuer " << partType << "-Punkt erkannt: " << actualKey << " (original: " << color << ")" << std::endl;
     }
 }
 
@@ -157,8 +194,19 @@ void CoordinateFilter::removeExpiredPoints() {
         FilteredPoint& fp = it->second;
         auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
 
-        if (timeDiff.count() > validityTimeout * 1000) {
-            std::cout << "Punkt " << fp.color << " wegen Timeout entfernt" << std::endl;
+        // Increment missed detections counter
+        if (timeDiff.count() > 100) { // 100ms ohne neue Detektion
+            fp.missedDetections++;
+        }
+
+        // Remove point if too many detections missed or timeout
+        bool shouldRemove = (timeDiff.count() > validityTimeout * 1000) || 
+                           (fp.missedDetections > maxMissedDetections);
+
+        if (shouldRemove) {
+            std::cout << "Punkt " << fp.color << " entfernt (Timeout: " 
+                      << (timeDiff.count() > validityTimeout * 1000) 
+                      << ", Missed: " << fp.missedDetections << ")" << std::endl;
             it = stablePoints.erase(it);
         } else {
             ++it;
@@ -225,6 +273,83 @@ std::string CoordinateFilter::extractHeckNumber(const std::string& color) const 
         return numberPart.empty() ? "0" : numberPart;
     }
     return "";
+}
+
+void CoordinateFilter::updateMotionModel(FilteredPoint& fp, const Point& newPosition) {
+    auto now = std::chrono::steady_clock::now();
+    auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
+    float deltaTime = timeDiff.count() / 1000.0f; // Convert to seconds
+
+    if (deltaTime > 0 && fp.totalDetections > 1) {
+        // Berechne neue Geschwindigkeit
+        Point newVelocity;
+        newVelocity.x = (newPosition.x - fp.predictedPosition.x) / deltaTime;
+        newVelocity.y = (newPosition.y - fp.predictedPosition.y) / deltaTime;
+
+        // Berechne neue Beschleunigung
+        Point newAcceleration;
+        newAcceleration.x = (newVelocity.x - fp.velocity.x) / deltaTime;
+        newAcceleration.y = (newVelocity.y - fp.velocity.y) / deltaTime;
+
+        // Glätte Geschwindigkeit und Beschleunigung mit exponentieller Filterung
+        if (fp.hasPrediction) {
+            fp.velocity.x = motionSmoothingFactor * fp.velocity.x + (1.0f - motionSmoothingFactor) * newVelocity.x;
+            fp.velocity.y = motionSmoothingFactor * fp.velocity.y + (1.0f - motionSmoothingFactor) * newVelocity.y;
+            fp.acceleration.x = motionSmoothingFactor * fp.acceleration.x + (1.0f - motionSmoothingFactor) * newAcceleration.x;
+            fp.acceleration.y = motionSmoothingFactor * fp.acceleration.y + (1.0f - motionSmoothingFactor) * newAcceleration.y;
+        } else {
+            fp.velocity = newVelocity;
+            fp.acceleration = newAcceleration;
+            fp.hasPrediction = true;
+        }
+
+        // Begrenze extreme Werte
+        const float maxVelocity = 1000.0f; // pixel/sec
+        const float maxAcceleration = 2000.0f; // pixel/sec²
+        
+        fp.velocity.x = std::max(-maxVelocity, std::min(maxVelocity, fp.velocity.x));
+        fp.velocity.y = std::max(-maxVelocity, std::min(maxVelocity, fp.velocity.y));
+        fp.acceleration.x = std::max(-maxAcceleration, std::min(maxAcceleration, fp.acceleration.x));
+        fp.acceleration.y = std::max(-maxAcceleration, std::min(maxAcceleration, fp.acceleration.y));
+    }
+
+    fp.predictedPosition = newPosition;
+}
+
+Point CoordinateFilter::predictNextPosition(const FilteredPoint& fp, float deltaTime) const {
+    if (!fp.hasPrediction) {
+        return fp.point;
+    }
+
+    // Kinematische Gleichung: s = s0 + v*t + 0.5*a*t²
+    Point predicted;
+    predicted.x = fp.point.x + fp.velocity.x * deltaTime + 0.5f * fp.acceleration.x * deltaTime * deltaTime;
+    predicted.y = fp.point.y + fp.velocity.y * deltaTime + 0.5f * fp.acceleration.y * deltaTime * deltaTime;
+    
+    return predicted;
+}
+
+void CoordinateFilter::generatePredictedPoints() {
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [color, fp] : stablePoints) {
+        if (fp.isStable && fp.hasPrediction && fp.missedDetections > 0) {
+            auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
+            float deltaTime = timeDiff.count() / 1000.0f;
+            
+            // Verwende Vorhersage nur für eine begrenzte Zeit
+            if (deltaTime < predictionTime && deltaTime > 0) {
+                fp.predictedPosition = predictNextPosition(fp, deltaTime);
+                
+                // Update the point with predicted position for smoother tracking
+                fp.point = fp.predictedPosition;
+                
+                std::cout << "Punkt " << color << " vorhergesagt bei (" 
+                          << fp.predictedPosition.x << ", " << fp.predictedPosition.y 
+                          << ") nach " << deltaTime << "s" << std::endl;
+            }
+        }
+    }
 }
 
 size_t CoordinateFilter::getActivePointCount() const {
