@@ -58,7 +58,7 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
                 // Point mit originalem Farbnamen erstellen
                 Point filteredPoint = fp.point;
                 filteredPoint.type = PointType::FRONT;
-                filteredPoint.color = color; // "Front"
+                filteredPoint.color = fp.color; // Verwende gespeicherte originale Farbe
                 result.push_back(filteredPoint);
                 frontCount++;
                 std::cout << "Front-Punkt (" << color << ") hinzugefügt" << std::endl;
@@ -70,7 +70,48 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
 }
 
 void CoordinateFilter::processDetection(const Point& newPoint, const std::string& color) {
-    auto it = stablePoints.find(color);
+    std::string partType = getVehiclePartType(color);
+    std::string actualKey = color; // Standard: verwende die originale Farbe als Schlüssel
+
+    // Für Front-Punkte: Spezielle Behandlung, da alle als "Front" kommen
+    if (partType == "front") {
+        // Suche nach existierendem Front-Punkt in der Nähe
+        std::string nearbyFrontKey = "";
+        for (const auto& [existingColor, fp] : stablePoints) {
+            if (getVehiclePartType(existingColor) == "front" && 
+                fp.point.distanceTo(newPoint) <= detectionRadius) {
+                nearbyFrontKey = existingColor;
+                break;
+            }
+        }
+
+        if (!nearbyFrontKey.empty()) {
+            // Verwende den existierenden Schlüssel
+            actualKey = nearbyFrontKey;
+        } else {
+            // Erstelle neuen eindeutigen Schlüssel für Front-Punkt
+            int frontIndex = 1;
+            while (stablePoints.find("Front_" + std::to_string(frontIndex)) != stablePoints.end()) {
+                frontIndex++;
+            }
+            actualKey = "Front_" + std::to_string(frontIndex);
+
+            // Prüfe maximale Anzahl Front-Punkte (alle, nicht nur stabile)
+            int activeFrontCount = 0;
+            for (const auto& [col, fp] : stablePoints) {
+                if (getVehiclePartType(col) == "front") {
+                    activeFrontCount++;
+                }
+            }
+
+            if (activeFrontCount >= 4) {
+                std::cout << "Bereits 4 Front-Punkte aktiv - neue Detektion ignoriert" << std::endl;
+                return;
+            }
+        }
+    }
+
+    auto it = stablePoints.find(actualKey);
 
     if (it != stablePoints.end()) {
         // Existierender Punkt gefunden
@@ -79,7 +120,7 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
         // Prüfen ob neue Detektion im erlaubten Bereich ist
         if (fp.isStable && !isWithinMovementThreshold(fp.point, newPoint)) {
             // Zu große Bewegung - als Ausreißer ignorieren
-            std::cout << "Ausreißer ignoriert für " << color << " (zu große Bewegung)" << std::endl;
+            std::cout << "Ausreißer ignoriert für " << actualKey << " (zu große Bewegung)" << std::endl;
             return;
         }
 
@@ -109,15 +150,11 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
         updatePointStability(fp);
 
     } else {
-        // Prüfen ob bereits zu viele Punkte dieses Typs existieren
-        std::string partType = getVehiclePartType(color);
-
+        // Für Heck-Punkte: Spezielle Validierung
         if (partType == "heck") {
-            // Für Heck-Punkte: Nur EINEN Punkt pro Heck-Typ (1,2,3,4) erlauben
             // Prüfen ob bereits ein Heck-Punkt mit derselben Nummer existiert
             for (const auto& [existingColor, fp] : stablePoints) {
                 if (getVehiclePartType(existingColor) == "heck") {
-                    // Extrahiere Heck-Nummer aus beiden Farben
                     std::string newHeckType = extractHeckNumber(color);
                     std::string existingHeckType = extractHeckNumber(existingColor);
 
@@ -129,7 +166,7 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
                 }
             }
 
-            // Zusätzlich: Maximal 4 Heck-Punkte insgesamt
+            // Maximal 4 Heck-Punkte insgesamt
             int activeHeckCount = 0;
             for (const auto& [col, fp] : stablePoints) {
                 if (getVehiclePartType(col) == "heck" && (fp.isValid || fp.isStable)) {
@@ -141,25 +178,11 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
                 std::cout << "Bereits 4 Heck-Punkte aktiv - neue Detektion " << color << " ignoriert" << std::endl;
                 return;
             }
-
-        } else if (partType == "front") {
-            // Für Front-Punkte: Maximal 4 erlauben
-            int activeFrontCount = 0;
-            for (const auto& [col, fp] : stablePoints) {
-                if (getVehiclePartType(col) == "front" && (fp.isValid || fp.isStable)) {
-                    activeFrontCount++;
-                }
-            }
-
-            if (activeFrontCount >= 4) {
-                std::cout << "Bereits 4 Front-Punkte aktiv - neue Detektion ignoriert" << std::endl;
-                return;
-            }
         }
 
         // Neuen Punkt erstellen
-        stablePoints[color] = FilteredPoint(newPoint, color);
-        std::cout << "Neuer " << partType << "-Punkt erkannt: " << color << std::endl;
+        stablePoints[actualKey] = FilteredPoint(newPoint, color); // Originale Farbe im FilteredPoint speichern
+        std::cout << "Neuer " << partType << "-Punkt erkannt: " << actualKey << " (original: " << color << ")" << std::endl;
     }
 }
 
