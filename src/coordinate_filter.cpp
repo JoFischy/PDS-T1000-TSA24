@@ -3,10 +3,12 @@
 #include <cmath>
 #include <iostream>
 
-CoordinateFilter::CoordinateFilter(float radius, float timeout, int minDetections, int maxRecent, float movement)
+CoordinateFilter::CoordinateFilter(float radius, float timeout, int minDetections, int maxRecent, float movement,
+                                           float predTime, int maxMissed, float smoothing)
     : detectionRadius(radius), validityTimeout(timeout), 
       minDetectionsForStability(minDetections), maxRecentDetections(maxRecent),
-      movementThreshold(movement) {
+      movementThreshold(movement), predictionTime(predTime), 
+      maxMissedDetections(maxMissed), motionSmoothingFactor(smoothing) {
 }
 
 std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& newDetections, 
@@ -18,6 +20,9 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
     for (size_t i = 0; i < newDetections.size() && i < colors.size(); i++) {
         processDetection(newDetections[i], colors[i]);
     }
+
+    // Generate predictions for missing points
+    generatePredictedPoints();
 
     // Nur stabile und gültige Punkte zurückgeben
     std::vector<Point> result;
@@ -88,8 +93,17 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
             fp.recentDetections.erase(fp.recentDetections.begin());
         }
 
+        // Vorherige Position für Motion-Tracking speichern
+        Point oldPosition = fp.point;
+
         // Cluster-Zentrum berechnen und Punkt aktualisieren
         fp.point = calculateClusterCenter(fp.recentDetections);
+
+        // Motion Model aktualisieren (Geschwindigkeit, Beschleunigung)
+        updateMotionModel(fp, fp.point);
+
+        // Reset missed detections counter
+        fp.missedDetections = 0;
 
         // Stabilität prüfen
         updatePointStability(fp);
@@ -157,8 +171,19 @@ void CoordinateFilter::removeExpiredPoints() {
         FilteredPoint& fp = it->second;
         auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
 
-        if (timeDiff.count() > validityTimeout * 1000) {
-            std::cout << "Punkt " << fp.color << " wegen Timeout entfernt" << std::endl;
+        // Increment missed detections counter
+        if (timeDiff.count() > 100) { // 100ms ohne neue Detektion
+            fp.missedDetections++;
+        }
+
+        // Remove point if too many detections missed or timeout
+        bool shouldRemove = (timeDiff.count() > validityTimeout * 1000) || 
+                           (fp.missedDetections > maxMissedDetections);
+
+        if (shouldRemove) {
+            std::cout << "Punkt " << fp.color << " entfernt (Timeout: " 
+                      << (timeDiff.count() > validityTimeout * 1000) 
+                      << ", Missed: " << fp.missedDetections << ")" << std::endl;
             it = stablePoints.erase(it);
         } else {
             ++it;
@@ -225,6 +250,83 @@ std::string CoordinateFilter::extractHeckNumber(const std::string& color) const 
         return numberPart.empty() ? "0" : numberPart;
     }
     return "";
+}
+
+void CoordinateFilter::updateMotionModel(FilteredPoint& fp, const Point& newPosition) {
+    auto now = std::chrono::steady_clock::now();
+    auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
+    float deltaTime = timeDiff.count() / 1000.0f; // Convert to seconds
+
+    if (deltaTime > 0 && fp.totalDetections > 1) {
+        // Berechne neue Geschwindigkeit
+        Point newVelocity;
+        newVelocity.x = (newPosition.x - fp.predictedPosition.x) / deltaTime;
+        newVelocity.y = (newPosition.y - fp.predictedPosition.y) / deltaTime;
+
+        // Berechne neue Beschleunigung
+        Point newAcceleration;
+        newAcceleration.x = (newVelocity.x - fp.velocity.x) / deltaTime;
+        newAcceleration.y = (newVelocity.y - fp.velocity.y) / deltaTime;
+
+        // Glätte Geschwindigkeit und Beschleunigung mit exponentieller Filterung
+        if (fp.hasPrediction) {
+            fp.velocity.x = motionSmoothingFactor * fp.velocity.x + (1.0f - motionSmoothingFactor) * newVelocity.x;
+            fp.velocity.y = motionSmoothingFactor * fp.velocity.y + (1.0f - motionSmoothingFactor) * newVelocity.y;
+            fp.acceleration.x = motionSmoothingFactor * fp.acceleration.x + (1.0f - motionSmoothingFactor) * newAcceleration.x;
+            fp.acceleration.y = motionSmoothingFactor * fp.acceleration.y + (1.0f - motionSmoothingFactor) * newAcceleration.y;
+        } else {
+            fp.velocity = newVelocity;
+            fp.acceleration = newAcceleration;
+            fp.hasPrediction = true;
+        }
+
+        // Begrenze extreme Werte
+        const float maxVelocity = 1000.0f; // pixel/sec
+        const float maxAcceleration = 2000.0f; // pixel/sec²
+        
+        fp.velocity.x = std::max(-maxVelocity, std::min(maxVelocity, fp.velocity.x));
+        fp.velocity.y = std::max(-maxVelocity, std::min(maxVelocity, fp.velocity.y));
+        fp.acceleration.x = std::max(-maxAcceleration, std::min(maxAcceleration, fp.acceleration.x));
+        fp.acceleration.y = std::max(-maxAcceleration, std::min(maxAcceleration, fp.acceleration.y));
+    }
+
+    fp.predictedPosition = newPosition;
+}
+
+Point CoordinateFilter::predictNextPosition(const FilteredPoint& fp, float deltaTime) const {
+    if (!fp.hasPrediction) {
+        return fp.point;
+    }
+
+    // Kinematische Gleichung: s = s0 + v*t + 0.5*a*t²
+    Point predicted;
+    predicted.x = fp.point.x + fp.velocity.x * deltaTime + 0.5f * fp.acceleration.x * deltaTime * deltaTime;
+    predicted.y = fp.point.y + fp.velocity.y * deltaTime + 0.5f * fp.acceleration.y * deltaTime * deltaTime;
+    
+    return predicted;
+}
+
+void CoordinateFilter::generatePredictedPoints() {
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [color, fp] : stablePoints) {
+        if (fp.isStable && fp.hasPrediction && fp.missedDetections > 0) {
+            auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
+            float deltaTime = timeDiff.count() / 1000.0f;
+            
+            // Verwende Vorhersage nur für eine begrenzte Zeit
+            if (deltaTime < predictionTime && deltaTime > 0) {
+                fp.predictedPosition = predictNextPosition(fp, deltaTime);
+                
+                // Update the point with predicted position for smoother tracking
+                fp.point = fp.predictedPosition;
+                
+                std::cout << "Punkt " << color << " vorhergesagt bei (" 
+                          << fp.predictedPosition.x << ", " << fp.predictedPosition.y 
+                          << ") nach " << deltaTime << "s" << std::endl;
+            }
+        }
+    }
 }
 
 size_t CoordinateFilter::getActivePointCount() const {
