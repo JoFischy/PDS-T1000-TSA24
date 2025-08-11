@@ -63,22 +63,30 @@ void Renderer::drawPoint(const Point& point, int index, bool isSelected) {
     DrawCircle(static_cast<int>(point.x), static_cast<int>(point.y), 12, color);
     DrawCircleLines(static_cast<int>(point.x), static_cast<int>(point.y), 12, BLACK);
 
-    // Draw point type label with numbering for Heck points
-    if (point.type == PointType::FRONT) {
-        DrawText("FRONT", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
-    } else {
-        // For identification/Heck points, show actual Heck number from color
-        const char* heckText = "HECK";
-        if (!point.color.empty() && point.color.find("Heck") == 0) {
+    // Draw point type label based on color string
+    if (!point.color.empty()) {
+        if (point.color == "Front") {
+            DrawText("FRONT", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+        } else if (point.color.find("Heck") == 0) {
+            // For Heck points, show actual Heck number from color
             static char heckLabel[16];
-            if (point.color == "Heck1") snprintf(heckLabel, sizeof(heckLabel), "HECK 1");
-            else if (point.color == "Heck2") snprintf(heckLabel, sizeof(heckLabel), "HECK 2");
-            else if (point.color == "Heck3") snprintf(heckLabel, sizeof(heckLabel), "HECK 3");
-            else if (point.color == "Heck4") snprintf(heckLabel, sizeof(heckLabel), "HECK 4");
-            else snprintf(heckLabel, sizeof(heckLabel), "HECK ?");
-            heckText = heckLabel;
+            if (point.color == "Heck1") snprintf(heckLabel, sizeof(heckLabel), "HECK1");
+            else if (point.color == "Heck2") snprintf(heckLabel, sizeof(heckLabel), "HECK2");
+            else if (point.color == "Heck3") snprintf(heckLabel, sizeof(heckLabel), "HECK3");
+            else if (point.color == "Heck4") snprintf(heckLabel, sizeof(heckLabel), "HECK4");
+            else snprintf(heckLabel, sizeof(heckLabel), "HECK?");
+            DrawText(heckLabel, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+        } else {
+            // Fallback for unknown colors
+            DrawText("UNKNOWN", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
         }
-        DrawText(heckText, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+    } else {
+        // Fallback wenn keine Farbe gesetzt ist
+        if (point.type == PointType::FRONT) {
+            DrawText("FRONT", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+        } else {
+            DrawText("HECK", static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), 18, BLACK);
+        }
     }
 }
 

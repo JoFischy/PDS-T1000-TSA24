@@ -1,286 +1,237 @@
-
 #include "coordinate_filter.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <map>
 
-CoordinateFilter::CoordinateFilter(float threshold, float timeout, int maxOutliers, int requiredDet)
-    : outlierThreshold(threshold), validityTimeout(timeout), maxConsecutiveOutliers(maxOutliers), 
-      requiredDetections(requiredDet) {
+CoordinateFilter::CoordinateFilter(float radius, float timeout, int minDetections, int maxRecent, float movement)
+    : detectionRadius(radius), validityTimeout(timeout), 
+      minDetectionsForStability(minDetections), maxRecentDetections(maxRecent),
+      movementThreshold(movement) {
 }
 
 std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& newDetections, 
                                                     const std::vector<std::string>& colors) {
-    // Zuerst abgelaufene Punkte entfernen
+    // Abgelaufene Punkte entfernen
     removeExpiredPoints();
-    
+
     // Neue Erkennungen verarbeiten
     for (size_t i = 0; i < newDetections.size() && i < colors.size(); i++) {
-        updatePoint(newDetections[i], colors[i]);
+        processDetection(newDetections[i], colors[i]);
     }
-    
-    // Fahrzeugteil-Limits durchsetzen (vor Stabilitätsprüfung!)
-    enforceVehiclePartLimits();
-    
-    // Stabilität der Punkte prüfen
-    updatePointStability();
-    
-    // Fahrzeugteil-Limits durchsetzen
-    enforceVehiclePartLimits();
-    
+
     // Nur stabile und gültige Punkte zurückgeben
     std::vector<Point> result;
-    for (const auto& fp : filteredPoints) {
+
+    // Heck-Punkte hinzufügen (maximal 1 pro Heck-Typ 1,2,3,4)
+    std::map<std::string, bool> heckNumbersAdded;
+    for (const auto& [color, fp] : stablePoints) {
         if (fp.isValid && fp.isStable) {
-            result.push_back(fp.point);
+            std::string partType = getVehiclePartType(color);
+            if (partType == "heck") {
+                std::string heckNumber = extractHeckNumber(color);
+                if (heckNumbersAdded.find(heckNumber) == heckNumbersAdded.end()) {
+                    // Point mit originalem Farbnamen erstellen
+                    Point filteredPoint = fp.point;
+                    filteredPoint.type = PointType::IDENTIFICATION;
+                    filteredPoint.color = color; // Originale Farbe beibehalten (Heck1, Heck2, etc.)
+                    result.push_back(filteredPoint);
+                    heckNumbersAdded[heckNumber] = true;
+                    std::cout << "Heck-Punkt " << heckNumber << " (" << color << ") hinzugefügt" << std::endl;
+                } else {
+                    std::cout << "Heck-Punkt " << heckNumber << " bereits hinzugefügt - " << color << " ignoriert" << std::endl;
+                }
+            }
         }
     }
-    
+
+    // Front-Punkte hinzufügen (maximal 4)
+    int frontCount = 0;
+    for (const auto& [color, fp] : stablePoints) {
+        if (fp.isValid && fp.isStable && frontCount < 4) {
+            std::string partType = getVehiclePartType(color);
+            if (partType == "front") {
+                // Point mit originalem Farbnamen erstellen
+                Point filteredPoint = fp.point;
+                filteredPoint.type = PointType::FRONT;
+                filteredPoint.color = color; // "Front"
+                result.push_back(filteredPoint);
+                frontCount++;
+                std::cout << "Front-Punkt (" << color << ") hinzugefügt" << std::endl;
+            }
+        }
+    }
+
     return result;
 }
 
-void CoordinateFilter::updatePoint(const Point& newPoint, const std::string& color) {
-    FilteredPoint* closest = findClosestExistingPoint(newPoint, color);
-    
-    if (closest != nullptr) {
-        // Existierenden Punkt gefunden
-        float distance = newPoint.distanceTo(closest->point);
-        float maxMovementPerFrame = 150.0f; // Maximale Bewegung pro Frame - erlaubt normale Fahrzeugbewegung
-        
-        if (distance > maxMovementPerFrame) {
-            // Zu große Bewegung (Teleportation) - als Ausreißer behandeln
-            closest->consecutiveOutliers++;
-            closest->consecutiveValidDetections = 0; // Gültige Erkennungen zurücksetzen
-            if (closest->consecutiveOutliers >= maxConsecutiveOutliers) {
-                // Zu viele Ausreißer - Punkt als ungültig markieren
-                closest->isValid = false;
-                closest->isStable = false;
-                std::cout << "Punkt " << color << " wegen Teleportation deaktiviert" << std::endl;
-            }
-        } else if (isOutlier(newPoint, *closest)) {
-            // Normaler Ausreißer erkannt
-            closest->consecutiveOutliers++;
-            closest->consecutiveValidDetections = 0; // Gültige Erkennungen zurücksetzen
-            if (closest->consecutiveOutliers >= maxConsecutiveOutliers) {
-                closest->isValid = false;
-                closest->isStable = false;
-                std::cout << "Punkt " << color << " wegen zu vieler Ausreißer deaktiviert" << std::endl;
-            }
-        } else {
-            // Gültige Aktualisierung
-            closest->point = newPoint;
-            closest->lastUpdate = std::chrono::steady_clock::now();
-            closest->consecutiveOutliers = 0;  // Ausreißer-Counter zurücksetzen
-            closest->consecutiveValidDetections++; // Gültige Erkennung zählen
-            
-            // Punkt wird erst nach mehreren konsistenten Erkennungen als gültig betrachtet
-            if (closest->consecutiveValidDetections >= closest->requiredConsecutiveDetections) {
-                closest->isValid = true;
-                if (!closest->isStable) {
-                    std::cout << "Punkt " << color << " nach " << closest->consecutiveValidDetections 
-                              << " konsistenten Erkennungen als gültig markiert" << std::endl;
-                }
-            }
+void CoordinateFilter::processDetection(const Point& newPoint, const std::string& color) {
+    auto it = stablePoints.find(color);
+
+    if (it != stablePoints.end()) {
+        // Existierender Punkt gefunden
+        FilteredPoint& fp = it->second;
+
+        // Prüfen ob neue Detektion im erlaubten Bereich ist
+        if (fp.isStable && !isWithinMovementThreshold(fp.point, newPoint)) {
+            // Zu große Bewegung - als Ausreißer ignorieren
+            std::cout << "Ausreißer ignoriert für " << color << " (zu große Bewegung)" << std::endl;
+            return;
         }
+
+        // Neue Detektion zur Liste hinzufügen
+        fp.recentDetections.push_back(newPoint);
+        fp.totalDetections++;
+        fp.lastUpdate = std::chrono::steady_clock::now();
+
+        // Alte Detektionen entfernen (nur letzte X behalten)
+        if (fp.recentDetections.size() > maxRecentDetections) {
+            fp.recentDetections.erase(fp.recentDetections.begin());
+        }
+
+        // Cluster-Zentrum berechnen und Punkt aktualisieren
+        fp.point = calculateClusterCenter(fp.recentDetections);
+
+        // Stabilität prüfen
+        updatePointStability(fp);
+
     } else {
-        // Vor dem Hinzufügen eines neuen Punktes prüfen, ob bereits ein Punkt dieses Typs existiert
+        // Prüfen ob bereits zu viele Punkte dieses Typs existieren
         std::string partType = getVehiclePartType(color);
-        
+
         if (partType == "heck") {
-            // Bei Heck-Teilen: Prüfen ob bereits ein Punkt mit dieser Farbe existiert
-            bool alreadyExists = false;
-            for (const auto& fp : filteredPoints) {
-                if (fp.color == color && (fp.isValid || fp.isStable)) {
-                    alreadyExists = true;
-                    break;
+            // Für Heck-Punkte: Nur EINEN Punkt pro Heck-Typ (1,2,3,4) erlauben
+            // Prüfen ob bereits ein Heck-Punkt mit derselben Nummer existiert
+            for (const auto& [existingColor, fp] : stablePoints) {
+                if (getVehiclePartType(existingColor) == "heck") {
+                    // Extrahiere Heck-Nummer aus beiden Farben
+                    std::string newHeckType = extractHeckNumber(color);
+                    std::string existingHeckType = extractHeckNumber(existingColor);
+
+                    if (newHeckType == existingHeckType && (fp.isValid || fp.isStable)) {
+                        std::cout << "Heck-Punkt " << newHeckType << " bereits aktiv (" << existingColor 
+                                  << ") - neue Detektion " << color << " ignoriert" << std::endl;
+                        return;
+                    }
                 }
             }
-            
-            if (alreadyExists) {
-                std::cout << "Neuer " << color << " Punkt ignoriert (bereits ein aktiver Punkt vorhanden)" << std::endl;
-                return; // Punkt nicht hinzufügen
+
+            // Zusätzlich: Maximal 4 Heck-Punkte insgesamt
+            int activeHeckCount = 0;
+            for (const auto& [col, fp] : stablePoints) {
+                if (getVehiclePartType(col) == "heck" && (fp.isValid || fp.isStable)) {
+                    activeHeckCount++;
+                }
             }
+
+            if (activeHeckCount >= 4) {
+                std::cout << "Bereits 4 Heck-Punkte aktiv - neue Detektion " << color << " ignoriert" << std::endl;
+                return;
+            }
+
         } else if (partType == "front") {
-            // Bei Front-Teilen: Zählen wie viele bereits aktiv sind
+            // Für Front-Punkte: Maximal 4 erlauben
             int activeFrontCount = 0;
-            for (const auto& fp : filteredPoints) {
-                if (getVehiclePartType(fp.color) == "front" && (fp.isValid || fp.isStable)) {
+            for (const auto& [col, fp] : stablePoints) {
+                if (getVehiclePartType(col) == "front" && (fp.isValid || fp.isStable)) {
                     activeFrontCount++;
                 }
             }
-            
+
             if (activeFrontCount >= 4) {
-                std::cout << "Neuer front Punkt ignoriert (bereits 4 aktive front Punkte vorhanden)" << std::endl;
-                return; // Punkt nicht hinzufügen
+                std::cout << "Bereits 4 Front-Punkte aktiv - neue Detektion ignoriert" << std::endl;
+                return;
             }
         }
-        
-        // Neuen Punkt hinzufügen - anfangs nicht gültig!
-        FilteredPoint newFP(newPoint, color);
-        newFP.requiredConsecutiveDetections = requiredDetections;
-        filteredPoints.push_back(newFP);
-        std::cout << "Neuer Punkt erkannt: " << color << " (benötigt " << requiredDetections 
-                  << " konsistente Erkennungen für Gültigkeit)" << std::endl;
+
+        // Neuen Punkt erstellen
+        stablePoints[color] = FilteredPoint(newPoint, color);
+        std::cout << "Neuer " << partType << "-Punkt erkannt: " << color << std::endl;
     }
 }
 
 void CoordinateFilter::removeExpiredPoints() {
     auto now = std::chrono::steady_clock::now();
-    
-    for (auto& fp : filteredPoints) {
-        if (fp.isValid) {
-            auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
-            if (timeDiff.count() > validityTimeout * 1000) {
-                fp.isValid = false;
-                fp.isStable = false;
-                std::cout << "Punkt " << fp.color << " wegen Timeout deaktiviert" << std::endl;
-            }
-        }
-    }
-    
-    // Punkte entfernen, die nie gültig wurden oder schon lange ungültig sind
-    filteredPoints.erase(
-        std::remove_if(filteredPoints.begin(), filteredPoints.end(),
-                      [now, this](const FilteredPoint& fp) {
-                          auto timeDiff = std::chrono::duration_cast<std::chrono::seconds>(now - fp.lastUpdate);
-                          
-                          // Schnelleres Entfernen von Punkten, die nie gültig wurden (Störpunkte)
-                          if (!fp.isValid && fp.consecutiveValidDetections < fp.requiredConsecutiveDetections) {
-                              return timeDiff.count() > validityTimeout * 0.5; // Störpunkte nach halber Timeout-Zeit entfernen
-                          }
-                          
-                          // Normale ungültige Punkte nach doppelter Timeout-Zeit entfernen
-                          if (!fp.isValid) {
-                              return timeDiff.count() > validityTimeout * 2;
-                          }
-                          
-                          return false;
-                      }),
-        filteredPoints.end());
-}
 
-bool CoordinateFilter::isOutlier(const Point& newPoint, const FilteredPoint& existing) const {
-    float distance = newPoint.distanceTo(existing.point);
-    return distance > outlierThreshold;
-}
+    auto it = stablePoints.begin();
+    while (it != stablePoints.end()) {
+        FilteredPoint& fp = it->second;
+        auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.lastUpdate);
 
-FilteredPoint* CoordinateFilter::findClosestExistingPoint(const Point& newPoint, const std::string& color) {
-    FilteredPoint* closest = nullptr;
-    float minDistance = outlierThreshold;
-    
-    for (auto& fp : filteredPoints) {
-        if (fp.color == color) {
-            float distance = newPoint.distanceTo(fp.point);
-            if (distance < minDistance) {
-                minDistance = distance;
-                closest = &fp;
-            }
-        }
-    }
-    
-    return closest;
-}
-
-size_t CoordinateFilter::getActivePointCount() const {
-    return std::count_if(filteredPoints.begin(), filteredPoints.end(),
-                        [](const FilteredPoint& fp) { return fp.isValid; });
-}
-
-void CoordinateFilter::updatePointStability() {
-    auto now = std::chrono::steady_clock::now();
-    
-    for (auto& fp : filteredPoints) {
-        if (fp.isValid && !fp.isStable) {
-            auto timeSinceCreation = std::chrono::duration_cast<std::chrono::milliseconds>(now - fp.creationTime);
-            // Punkt wird stabil wenn er gültig ist UND die Mindestzeit erreicht hat
-            if (timeSinceCreation.count() >= fp.stabilityRequirement * 1000) {
-                fp.isStable = true;
-                std::cout << "Punkt " << fp.color << " ist jetzt stabil und bereit für Fahrzeugerkennung "
-                          << "(nach " << fp.consecutiveValidDetections << " Erkennungen)" << std::endl;
-            }
+        if (timeDiff.count() > validityTimeout * 1000) {
+            std::cout << "Punkt " << fp.color << " wegen Timeout entfernt" << std::endl;
+            it = stablePoints.erase(it);
+        } else {
+            ++it;
         }
     }
 }
 
-void CoordinateFilter::clearAll() {
-    filteredPoints.clear();
+void CoordinateFilter::updatePointStability(FilteredPoint& fp) {
+    // Punkt wird stabil wenn genug konsistente Detektionen vorhanden sind
+    if (fp.totalDetections >= minDetectionsForStability) {
+        // Prüfen ob alle letzten Detektionen im Stabilitätsradius liegen
+        bool allWithinRadius = true;
+        for (const Point& detection : fp.recentDetections) {
+            if (fp.point.distanceTo(detection) > fp.stabilityRadius) {
+                allWithinRadius = false;
+                break;
+            }
+        }
+
+        if (allWithinRadius && !fp.isStable) {
+            fp.isStable = true;
+            fp.isValid = true;
+            fp.consecutiveValidDetections = fp.recentDetections.size();
+            std::cout << "Punkt " << fp.color << " ist jetzt stabil nach " 
+                      << fp.totalDetections << " Detektionen" << std::endl;
+        } else if (allWithinRadius) {
+            fp.isValid = true;
+            fp.consecutiveValidDetections++;
+        }
+    }
+}
+
+Point CoordinateFilter::calculateClusterCenter(const std::vector<Point>& detections) const {
+    if (detections.empty()) {
+        return Point();
+    }
+
+    float sumX = 0.0f, sumY = 0.0f;
+    for (const Point& p : detections) {
+        sumX += p.x;
+        sumY += p.y;
+    }
+
+    return Point(sumX / detections.size(), sumY / detections.size());
+}
+
+bool CoordinateFilter::isWithinMovementThreshold(const Point& oldPos, const Point& newPos) const {
+    return oldPos.distanceTo(newPos) <= movementThreshold;
 }
 
 std::string CoordinateFilter::getVehiclePartType(const std::string& color) const {
-    if (color.find("heck") != std::string::npos) {
+    if (color.find("Heck") == 0) {
         return "heck";
-    } else if (color.find("front") != std::string::npos) {
+    } else if (color.find("Front") == 0) {
         return "front";
     }
-    return color; // Fallback für andere Farben
+    return color;
 }
 
-void CoordinateFilter::enforceVehiclePartLimits() {
-    std::map<std::string, std::vector<FilteredPoint*>> heckParts; // heck1, heck2, etc.
-    std::vector<FilteredPoint*> frontParts;
-    
-    // Alle Punkte nach Typ gruppieren (auch die noch nicht stabilen aber gültigen)
-    for (auto& fp : filteredPoints) {
-        if (fp.isValid) { // Nur gültige Punkte berücksichtigen
-            std::string partType = getVehiclePartType(fp.color);
-            
-            if (partType == "heck") {
-                heckParts[fp.color].push_back(&fp);
-            } else if (partType == "front") {
-                frontParts.push_back(&fp);
-            }
-        }
+std::string CoordinateFilter::extractHeckNumber(const std::string& color) const {
+    if (color.find("Heck") == 0) {
+        // Extract number from "Heck1", "Heck2", etc.
+        std::string numberPart = color.substr(4); // Skip "Heck"
+        return numberPart.empty() ? "0" : numberPart;
     }
-    
-    // Für jeden Heck-Typ: maximal 1 behalten
-    for (auto& [heckType, points] : heckParts) {
-        if (points.size() > 1) {
-            // Sortiere nach Qualität (Stabilität > consecutive detections > Alter)
-            std::sort(points.begin(), points.end(), 
-                     [](const FilteredPoint* a, const FilteredPoint* b) {
-                         // Stabile Punkte haben Priorität
-                         if (a->isStable != b->isStable) {
-                             return a->isStable > b->isStable;
-                         }
-                         // Dann nach Anzahl gültiger Erkennungen
-                         if (a->consecutiveValidDetections != b->consecutiveValidDetections) {
-                             return a->consecutiveValidDetections > b->consecutiveValidDetections;
-                         }
-                         // Schließlich ältere bevorzugen
-                         return a->creationTime < b->creationTime;
-                     });
-            
-            // Alle außer dem besten entfernen
-            for (size_t i = 1; i < points.size(); i++) {
-                points[i]->isValid = false;
-                points[i]->isStable = false;
-                std::cout << "Überflüssiger " << heckType << " Punkt entfernt (zu viele vom gleichen Typ, "
-                          << points[i]->consecutiveValidDetections << " Erkennungen)" << std::endl;
-            }
-        }
-    }
-    
-    // Für Front-Teile: maximal 4 behalten
-    if (frontParts.size() > 4) {
-        // Sortiere nach Qualität
-        std::sort(frontParts.begin(), frontParts.end(), 
-                 [](const FilteredPoint* a, const FilteredPoint* b) {
-                     if (a->isStable != b->isStable) {
-                         return a->isStable > b->isStable;
-                     }
-                     if (a->consecutiveValidDetections != b->consecutiveValidDetections) {
-                         return a->consecutiveValidDetections > b->consecutiveValidDetections;
-                     }
-                     return a->creationTime < b->creationTime;
-                 });
-        
-        // Alle außer den besten 4 entfernen
-        for (size_t i = 4; i < frontParts.size(); i++) {
-            frontParts[i]->isValid = false;
-            frontParts[i]->isStable = false;
-            std::cout << "Überflüssiger front Punkt entfernt (mehr als 4 aktiv, "
-                      << frontParts[i]->consecutiveValidDetections << " Erkennungen)" << std::endl;
-        }
-    }
+    return "";
+}
+
+size_t CoordinateFilter::getActivePointCount() const {
+    return std::count_if(stablePoints.begin(), stablePoints.end(),
+                        [](const auto& pair) { return pair.second.isValid; });
+}
+
+void CoordinateFilter::clearAll() {
+    stablePoints.clear();
 }

@@ -6,59 +6,63 @@
 #include <vector>
 #include <chrono>
 #include <string>
+#include <map>
 
 struct FilteredPoint {
     Point point;
     std::chrono::steady_clock::time_point lastUpdate;
     std::chrono::steady_clock::time_point creationTime;
     bool isValid;
-    bool isStable;  // Punkt ist stabil genug für Fahrzeugerkennung
+    bool isStable;
     std::string color;
-    int consecutiveOutliers;
-    int consecutiveValidDetections;  // Anzahl aufeinanderfolgender gültiger Erkennungen
-    int requiredConsecutiveDetections;  // Benötigte konsistente Erkennungen für Stabilität
-    float stabilityRequirement;  // Sekunden bis Punkt als stabil gilt
+    int consecutiveValidDetections;
+    int totalDetections;
+    float stabilityRadius;  // Radius in dem Detektionen als "gleich" gelten
+    std::vector<Point> recentDetections;  // Letzte Detektionen für Clustering
     
-    FilteredPoint() : isValid(false), isStable(false), consecutiveOutliers(0), 
-                     consecutiveValidDetections(0), requiredConsecutiveDetections(3), stabilityRequirement(0.5f) {}
+    FilteredPoint() : isValid(false), isStable(false), consecutiveValidDetections(0), 
+                     totalDetections(0), stabilityRadius(50.0f) {}
     FilteredPoint(const Point& p, const std::string& c) 
         : point(p), lastUpdate(std::chrono::steady_clock::now()), 
           creationTime(std::chrono::steady_clock::now()),
-          isValid(false), isStable(false), color(c), consecutiveOutliers(0), 
-          consecutiveValidDetections(1), requiredConsecutiveDetections(3), stabilityRequirement(0.5f) {}
+          isValid(false), isStable(false), color(c), 
+          consecutiveValidDetections(0), totalDetections(1), stabilityRadius(50.0f) {
+        recentDetections.push_back(p);
+    }
 };
 
 class CoordinateFilter {
 private:
-    std::vector<FilteredPoint> filteredPoints;
-    float outlierThreshold;        // Maximale Distanz für gültige Updates
+    std::map<std::string, FilteredPoint> stablePoints;  // Ein Punkt pro Farbe
+    float detectionRadius;         // Radius für neue Detektionen
     float validityTimeout;         // Sekunden bis Punkt ungültig wird
-    int maxConsecutiveOutliers;    // Max Anzahl Ausreißer bevor Punkt ungültig
-    int requiredDetections;        // Benötigte konsistente Erkennungen für Gültigkeit
+    int minDetectionsForStability; // Mindest-Detektionen für Stabilität
+    int maxRecentDetections;       // Maximale Anzahl gespeicherter Detektionen für Clustering
+    float movementThreshold;       // Maximale Bewegung pro Frame
 
 public:
-    CoordinateFilter(float threshold = 80.0f, float timeout = 3.0f, int maxOutliers = 3, int requiredDet = 3);
+    CoordinateFilter(float radius = 80.0f, float timeout = 2.0f, 
+                    int minDetections = 5, int maxRecent = 10, float movement = 120.0f);
     
-    // Hauptfunktion: Filtert neue Erkennungen und gibt geglättete Punkte zurück
+    // Hauptfunktion: Filtert neue Erkennungen und gibt stabile Punkte zurück
     std::vector<Point> filterAndSmooth(const std::vector<Point>& newDetections, 
                                       const std::vector<std::string>& colors);
     
     // Hilfsfunktionen
-    void updatePoint(const Point& newPoint, const std::string& color);
+    void processDetection(const Point& newPoint, const std::string& color);
     void removeExpiredPoints();
-    void enforceVehiclePartLimits();  // Begrenzt Anzahl der Fahrzeugteile
-    bool isOutlier(const Point& newPoint, const FilteredPoint& existing) const;
-    FilteredPoint* findClosestExistingPoint(const Point& newPoint, const std::string& color);
-    std::string getVehiclePartType(const std::string& color) const;  // Extrahiert Typ (heck1->heck, front->front)
+    void updatePointStability(FilteredPoint& fp);
+    Point calculateClusterCenter(const std::vector<Point>& detections) const;
+    bool isWithinMovementThreshold(const Point& oldPos, const Point& newPos) const;
+    std::string getVehiclePartType(const std::string& color) const;
+    std::string extractHeckNumber(const std::string& color) const;
     
     // Getter/Setter
-    void setOutlierThreshold(float threshold) { outlierThreshold = threshold; }
+    void setDetectionRadius(float radius) { detectionRadius = radius; }
     void setValidityTimeout(float timeout) { validityTimeout = timeout; }
-    float getOutlierThreshold() const { return outlierThreshold; }
+    float getDetectionRadius() const { return detectionRadius; }
     float getValidityTimeout() const { return validityTimeout; }
     
-    // Stabilität und Debug-Informationen
-    void updatePointStability();
     size_t getActivePointCount() const;
     void clearAll();
 };

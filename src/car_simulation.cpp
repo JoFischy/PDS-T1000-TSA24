@@ -12,7 +12,7 @@
 
 CarSimulation::CarSimulation() : tolerance(100.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), 
                                  distance_buffer(DISTANCE_BUFFER),
-                                 coordinateFilter(80.0f, 3.0f, 3) {
+                                 coordinateFilter(30.0f, 2.0f, 2, 5, 200.0f) {
     renderer = nullptr;
 }
 
@@ -51,7 +51,7 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
         }
     }
 
-    // Filter points through coordinate filter to remove outliers
+    // Filter points through coordinate filter to get stable points only
     points = coordinateFilter.filterAndSmooth(rawPoints, colors);
 
     // Detect vehicles from filtered points only
