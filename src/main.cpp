@@ -3,6 +3,7 @@
 #include <vector>
 #include "car_simulation.h"
 #include "py_runner.h"
+#include "test_window.h"
 
 int main(int argc, char* argv[]) {
     // Command-line Parameter parsen
@@ -61,6 +62,13 @@ int main(int argc, char* argv[]) {
     }
     
     SetTargetFPS(60);
+    
+    // === SEPARATES TEST-FENSTER STARTEN ===
+    // Startet ein maximiertes Live-Koordinaten-Fenster auf dem Hauptmonitor
+    #ifdef _WIN32
+    createWindowsAPITestWindow();
+    std::cout << "Live-Koordinaten-Fenster wird maximiert auf Hauptmonitor gestartet..." << std::endl;
+    #endif
     
     // === CV2-FENSTER SETUP FÜR PYTHON ===
     // Positioniere CV2-Fenster auf einem anderen Monitor als Raylib
@@ -147,6 +155,11 @@ int main(int argc, char* argv[]) {
         
         // Hole aktuelle Koordinaten von der Farberkennung
         std::vector<DetectedObject> detected_objects = get_detected_coordinates();
+        
+        // Update Live-Koordinaten-Fenster
+        #ifdef _WIN32
+        updateTestWindowCoordinates(detected_objects);
+        #endif
         
         // Konfiguriere Monitor-Position nachträglich, wenn nötig
         if (monitor_config_pending) {
