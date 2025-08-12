@@ -3,17 +3,19 @@
 #include "auto.h"
 #include "renderer.h"
 #include "py_runner.h"
-#include "coordinate_filter.h"
+#include "coordinate_filter_fast.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 #define DEFAULT_CAR_POINT_DISTANCE 12.0f
 #define DISTANCE_BUFFER 4.0f
 
 CarSimulation::CarSimulation() : tolerance(100.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), 
-                                 distance_buffer(DISTANCE_BUFFER),
-                                 coordinateFilter(50.0f, 5.0f, 2, 8, 300.0f) {
+                                 distance_buffer(DISTANCE_BUFFER) {
     renderer = nullptr;
+    // Verwende den schnellen Filter für minimale Verzögerung
+    fastFilter = createFastCoordinateFilter();
 }
 
 CarSimulation::~CarSimulation() {
@@ -51,8 +53,13 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
         }
     }
 
-    // Filter points through coordinate filter to get stable points only
-    points = coordinateFilter.filterAndSmooth(rawPoints, colors);
+    // SCHNELLER FILTER: Direkter Durchgang für minimale Verzögerung
+    if (fastFilter) {
+        points = fastFilter->filterAndSmooth(rawPoints, colors);
+    } else {
+        // Fallback: Direkte Verwendung ohne Filter
+        points = rawPoints;
+    }
 
     // Detect vehicles from filtered points only
     detectVehicles();

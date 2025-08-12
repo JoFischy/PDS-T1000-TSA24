@@ -43,7 +43,7 @@ private:
     float time_elapsed;
     float car_point_distance;
     float distance_buffer;
-    CoordinateFilter coordinateFilter;
+    std::unique_ptr<CoordinateFilter> fastFilter; // Schneller Filter für minimale Verzögerung
 
 public:
     // Constructor and Destructor

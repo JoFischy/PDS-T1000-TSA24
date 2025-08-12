@@ -69,9 +69,9 @@ bool initializeDetector() {
         
         if (success) {
             detector_initialized = true;
-            std::cout << "Python Detektor erfolgreich initialisiert!" << std::endl;
+            // Initialisiert
         } else {
-            std::cout << "Python Detektor Initialisierung fehlgeschlagen!" << std::endl;
+            // Fehler
         }
         
         return success;

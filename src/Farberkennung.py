@@ -30,7 +30,15 @@ class SimpleCoordinateDetector:
         self.detection_lock = threading.Lock()
         self.running = False
 
-        # Farbdefinitionen (HSV)
+        # PERFORMANCE MODE: Reduziere Debug-Features für maximale Geschwindigkeit
+        self.performance_mode = False  # Kann von C++ aktiviert werden
+        self.show_filter_masks = True  # Filtermasken-Anzeige (für HSV-Einstellungen)
+
+        # Fenster-Verwaltung für besseres Verschieben
+        self.windows_created = set()
+        self.main_windows_positioned = False
+
+        # Farbdefinitionen (HSV) - FINAL OPTIMIERT
         self.color_definitions = {
             'Front': [114, 255, 150],
             'Heck1': [72, 255, 60],
@@ -39,20 +47,7 @@ class SimpleCoordinateDetector:
             'Heck4': [11, 160, 255]
         }
 
-        # Toleranz-Einstellungen für jede Farbe
-        self.color_tolerances = {
-            'Front': 50,
-            'Heck1': 50,
-            'Heck2': 50,
-            'Heck3': 50,
-            'Heck4': 50
-        }
-
-        # Fenster-Verwaltung für besseres Verschieben
-        self.windows_created = set()
-        self.main_windows_positioned = False
-
-        # HSV-Toleranzen für jeden Filter (separate von Gewichtungen)
+        # HSV-Toleranzen für jeden Filter - FINAL OPTIMIERT
         self.hsv_tolerances = {
             'Front': {'h': 34, 's': 48, 'v': 255},
             'Heck1': {'h': 9, 's': 0, 'v': 255},
@@ -388,7 +383,7 @@ class SimpleCoordinateDetector:
         return valid_spots, len(valid_spots)
 
     def detect_colors(self, cropped_frame):
-        """H-Wert-basierte Farberkennung mit Farbdichte-Analyse"""
+        """H-Wert-basierte Farberkennung mit Farbdichte-Analyse - OPTIMIERT FÜR GESCHWINDIGKEIT"""
         detected_objects = []
 
         try:
@@ -407,10 +402,6 @@ class SimpleCoordinateDetector:
                 # Erstelle HSV-basierte Maske für diese Farbe
                 mask = self.create_hsv_mask(hsv, color_name)
                 filter_masks[color_name] = mask.copy()  # Speichere für Anzeige
-
-                # Debug: Zeige Anzahl der gefundenen Konturen
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                print(f"Debug {color_name}: {len(contours)} Konturen gefunden")
 
                 # Finde ALLE Bereiche mit Farbdichte (nicht nur den besten)
                 spots, spot_count = self.find_highest_density_spot(mask)
@@ -442,7 +433,7 @@ class SimpleCoordinateDetector:
                             cx, cy = position
                             normalized_coords = self.normalize_coordinates((cx, cy), crop_width, crop_height)
 
-                            # Validierung: Prüfe tatsächlichen H-Wert am gefundenen Punkt
+                            # SCHNELLE Validierung: Prüfe tatsächlichen H-Wert am gefundenen Punkt
                             if 0 <= cy < hsv.shape[0] and 0 <= cx < hsv.shape[1]:
                                 hsv_pixel = hsv[cy, cx]
                                 h_actual = int(hsv_pixel[0])
@@ -466,14 +457,13 @@ class SimpleCoordinateDetector:
                                         'area': density_score
                                     })
                                     candidate_id += 1
-                                    print(f"Front-Punkt {i+1} erkannt bei ({cx}, {cy}) mit Dichte-Score: {density_score:.1f}")
                     else:
                         # Für Heck-Punkte: nur den besten Spot
                         position, density_score = spots[0]
                         cx, cy = position
                         normalized_coords = self.normalize_coordinates((cx, cy), crop_width, crop_height)
 
-                        # Validierung: Prüfe tatsächlichen H-Wert am gefundenen Punkt
+                        # SCHNELLE Validierung: Prüfe tatsächlichen H-Wert am gefundenen Punkt
                         if 0 <= cy < hsv.shape[0] and 0 <= cx < hsv.shape[1]:
                             hsv_pixel = hsv[cy, cx]
                             h_actual = int(hsv_pixel[0])
@@ -497,7 +487,6 @@ class SimpleCoordinateDetector:
                                     'area': density_score
                                 })
                                 candidate_id += 1
-                                print(f"Farbe {color_name} erkannt bei ({cx}, {cy}) mit Dichte-Score: {density_score:.1f}")
 
             # Filtern: Genau 1 pro Heck-Typ und genau 4 Front-Punkte (immer wahrscheinlichste nehmen)
             heck_colors = ['Heck1', 'Heck2', 'Heck3', 'Heck4']
@@ -516,23 +505,15 @@ class SimpleCoordinateDetector:
                 elif color in heck_colors and color not in used_heck_colors:
                     detected_objects.append(candidate)
                     used_heck_colors.add(color)
-                    print(f"Heck-Punkt {color} hinzugefügt (Dichte: {candidate['density_score']:.1f})")
 
             # Nimm immer die 4 wahrscheinlichsten Front-Punkte (auch wenn wenig erkannt)
             front_candidates.sort(key=lambda x: x['density_score'], reverse=True)
             for i, candidate in enumerate(front_candidates[:4]):
                 detected_objects.append(candidate)
-                print(f"Front-Punkt {i+1} hinzugefügt (Dichte: {candidate['density_score']:.1f})")
 
-            # Falls weniger als 4 Front-Punkte gefunden, trotzdem weitermachen
-            if len(front_candidates) < 4:
-                print(f"WARNUNG: Nur {len(front_candidates)} Front-Punkte gefunden, sollten 4 sein")
-
-            print(f"Gesamt erkannt: {len(detected_objects)} Objekte (Heck: {len(used_heck_colors)}/4, Front: {min(len(front_candidates), 4)}/4)")
-            print(f"Heck-Farben verwendet: {used_heck_colors}")
-
-            # Zeige alle Filtermasken als separate Fenster
-            self.display_filter_masks(filter_masks, detected_objects)
+            # Zeige Filtermasken basierend auf Einstellung (für HSV-Justierung)
+            if self.show_filter_masks:
+                self.display_filter_masks(filter_masks, detected_objects)
 
             return detected_objects, crop_width, crop_height
 
@@ -574,24 +555,22 @@ class SimpleCoordinateDetector:
             s_tol = self.hsv_tolerances[color_name]['s']
             v_tol = self.hsv_tolerances[color_name]['v']
 
-            # HSV-Info als Text (ohne Gewichtung)
-            cv2.putText(mask_colored, f"HSV: {target_hsv[0]},{target_hsv[1]},{target_hsv[2]}", 
+            # HSV-Info als Text - KOMPAKT
+            cv2.putText(mask_colored, f"HSV:{target_hsv[0]},{target_hsv[1]},{target_hsv[2]}", 
                        (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-            cv2.putText(mask_colored, f"Toleranz: {h_tol},{s_tol},{v_tol}", 
+            cv2.putText(mask_colored, f"Tol:{h_tol},{s_tol},{v_tol}", 
                        (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
             cv2.imshow(window_name, mask_colored)
 
     def save_coordinates_for_cpp(self, detected_objects, crop_width, crop_height):
-        """Speichere Koordinaten für C++ Verarbeitung"""
+        """Speichere Koordinaten für C++ Verarbeitung - OPTIMIERT FÜR MAXIMALE GESCHWINDIGKEIT"""
         try:
             output_data = {
                 'timestamp': time.time(),
-                'crop_area': {
-                    'width': crop_width,
-                    'height': crop_height
-                },
-                'objects': []
+                'crop_area': {'width': crop_width, 'height': crop_height},
+                'objects': [],
+                'direct_mode': True
             }
 
             for obj in detected_objects:
@@ -602,17 +581,17 @@ class SimpleCoordinateDetector:
                         'x': obj['normalized_coords'][0],
                         'y': obj['normalized_coords'][1]
                     },
-                    'area': obj['area']
+                    'area': obj['area'],
+                    'confidence': obj.get('density_score', 1.0)
                 })
 
-            # Speichere in JSON-Datei für C++
+            # MINIMAL BUFFERING - Sofortiges Schreiben
             with open('coordinates.json', 'w') as f:
-                json.dump(output_data, f, indent=2)
+                json.dump(output_data, f, separators=(',', ':'))
+                f.flush()
 
             return True
-
-        except Exception as e:
-            print(f"Speicher-Fehler: {e}")
+        except:
             return False
 
     def run_detection(self):
@@ -625,7 +604,7 @@ class SimpleCoordinateDetector:
 
         print("=== EINFACHE KOORDINATEN-ERKENNUNG ===")
         print("Koordinaten werden für C++ normalisiert (0,0 = oben links)")
-        print("ESC = Beenden")
+        print("ESC = Beenden, F = Filtermasken ein/aus")
         print("=====================================")
 
         while True:
@@ -641,13 +620,11 @@ class SimpleCoordinateDetector:
             hsv_full_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             color_position, rgb_values, hsv_values = self.measure_color_at_position(frame, hsv_full_frame)
 
-            # Speichere Koordinaten für C++
+            # Speichere Koordinaten für C++ - SCHNELL ohne Debug-Ausgaben
             if detected_objects:
                 if self.save_coordinates_for_cpp(detected_objects, crop_width, crop_height):
-                    print(f"OK {len(detected_objects)} Objekte erkannt und gespeichert")
-                    for obj in detected_objects:
-                        coords = obj['normalized_coords']
-                        print(f"  {obj['classified_color']}: ({coords[0]}, {coords[1]})")
+                    # Minimale Ausgabe für Performance
+                    pass
 
             # Visualisierung
             left, top, right, bottom = crop_bounds
@@ -667,28 +644,19 @@ class SimpleCoordinateDetector:
                 cv2.putText(frame, info_text, (pos_original[0] + 12, pos_original[1] - 12), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 2)
 
-            # Status
+            # Status - MINIMIERT FÜR PERFORMANCE
             cv2.putText(frame, f"OBJEKTE: {len(detected_objects)}", 
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"Crop-Bereich: {crop_width}x{crop_height}", 
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
-            # Toleranz-Anzeige
-            y_offset = 90
-            for color_name, tolerance in self.color_tolerances.items():
-                cv2.putText(frame, f"{color_name}: Tol={tolerance}", 
-                           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-                y_offset += 20
-
-            # Farbmesser zeichnen (falls aktiviert)
+            # Farbmesser zeichnen (falls aktiviert) - REDUZIERTE DEBUG-AUSGABEN
             if self.color_picker_enabled and color_position:
                 self.draw_color_picker(frame, color_position, rgb_values, hsv_values)
 
-                # Zeige auch in der Konsole (alle 30 Frames um Spam zu vermeiden)
+                # Reduzierte Konsolen-Ausgabe für bessere Performance (alle 60 Frames)
                 frame_count = getattr(self, '_frame_count', 0)
                 self._frame_count = frame_count + 1
-                if self._frame_count % 30 == 0:
-                    print(f"Farbmesser bei ({color_position[0]}, {color_position[1]}): RGB{rgb_values} HSV{hsv_values}")
+                if self._frame_count % 60 == 0:
+                    print(f"Farbmesser: RGB{rgb_values} HSV{hsv_values}")
 
             # Zeige Video mit erkannten Objekten - Fenster nur einmal erstellen
             if not self.main_windows_positioned:
@@ -702,8 +670,24 @@ class SimpleCoordinateDetector:
             # Force window update
             cv2.waitKey(1)
 
-            if cv2.waitKey(30) & 0xFF == 27:  # ESC
+            # Tastatur-Input verarbeiten
+            key = cv2.waitKey(30) & 0xFF
+            
+            if key == 27:  # ESC
                 break
+            elif key == ord('f') or key == ord('F'):  # F = Toggle Filtermasken
+                self.show_filter_masks = not self.show_filter_masks
+                status = "aktiviert" if self.show_filter_masks else "deaktiviert"
+                print(f"Filtermasken {status} (F zum Umschalten)")
+                
+                # Wenn deaktiviert, alle Filterfenster schließen
+                if not self.show_filter_masks:
+                    for color_name in self.color_definitions.keys():
+                        filter_window_name = f"Filter-{color_name}"
+                        try:
+                            cv2.destroyWindow(filter_window_name)
+                        except:
+                            pass
 
         self.cap.release()
         cv2.destroyAllWindows()
@@ -882,6 +866,16 @@ def detect_objects():
     except Exception as e:
         print(f"Fehler bei Objekterkennung: {e}")
         return []
+
+def enable_performance_mode():
+    """Aktiviere Performance-Modus für maximale Geschwindigkeit (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector:
+        _global_detector.performance_mode = True
+        _global_detector.color_picker_enabled = 0
+        _global_detector.show_filter_masks = False
+        return True
+    return False
 
 def cleanup_detector():
     """Räume den Detektor auf (von C++ aufgerufen)"""

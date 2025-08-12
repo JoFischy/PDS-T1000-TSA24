@@ -41,9 +41,8 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
                     filteredPoint.color = color; // Originale Farbe beibehalten (Heck1, Heck2, etc.)
                     result.push_back(filteredPoint);
                     heckNumbersAdded[heckNumber] = true;
-                    std::cout << "Heck-Punkt " << heckNumber << " (" << color << ") hinzugefügt" << std::endl;
                 } else {
-                    std::cout << "Heck-Punkt " << heckNumber << " bereits hinzugefügt - " << color << " ignoriert" << std::endl;
+                    continue;
                 }
             }
         }
@@ -61,7 +60,6 @@ std::vector<Point> CoordinateFilter::filterAndSmooth(const std::vector<Point>& n
                 filteredPoint.color = fp.color; // Verwende gespeicherte originale Farbe
                 result.push_back(filteredPoint);
                 frontCount++;
-                std::cout << "Front-Punkt (" << color << ") hinzugefügt" << std::endl;
             }
         }
     }

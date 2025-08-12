@@ -32,44 +32,28 @@ int main(int argc, char* argv[]) {
     SetTraceLogLevel(LOG_WARNING); // Reduziere Logs
     
     if (auto_fullscreen_monitor2) {
-        std::cout << "=== MONITOR 2 VOLLBILD SETUP ===" << std::endl;
-        
-        // Normale Fenster-Initialisierung
+        // Monitor 2 Setup - minimal output
         InitWindow(800, 600, "PDS-T1000-TSA24");
         
         int monitorCount = GetMonitorCount();
-        std::cout << "Erkannte Monitore: " << monitorCount << std::endl;
         
         if (monitorCount >= 2) {
-            // Monitor 2 (Index 1) verwenden
             Vector2 monitor2Pos = GetMonitorPosition(1);
             screenWidth = GetMonitorWidth(1);
             screenHeight = GetMonitorHeight(1);
-            std::cout << "Monitor 2 Position: " << monitor2Pos.x << ", " << monitor2Pos.y << std::endl;
-            std::cout << "Monitor 2 Größe: " << screenWidth << "x" << screenHeight << std::endl;
             
-            // WICHTIG: Warten bis Fenster bereit ist
             WaitTime(0.1f);
-            
-            // Schritt 1: Fenster auf Monitor 2 positionieren (weit rechts)
             SetWindowPosition((int)monitor2Pos.x + 100, (int)monitor2Pos.y + 100);
             WaitTime(0.1f);
-            
-            // Schritt 2: Fenstergröße anpassen
             SetWindowSize(screenWidth - 200, screenHeight - 200);
             WaitTime(0.1f);
-            
-            // Schritt 3: Vollbild aktivieren (sollte jetzt auf Monitor 2 sein)
             ToggleFullscreen();
-            std::cout << "✅ VOLLBILD AUF MONITOR 2 AKTIVIERT!" << std::endl;
         } else {
-            std::cout << "⚠️ Nur " << monitorCount << " Monitor(e) gefunden - verwende Monitor 1" << std::endl;
             ToggleFullscreen();
         }
     } else if (auto_fullscreen) {
         InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
         ToggleFullscreen();
-        std::cout << "✅ VOLLBILD AUF AKTUELLEM MONITOR AKTIVIERT!" << std::endl;
     } else {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE);
         InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
@@ -96,19 +80,6 @@ int main(int argc, char* argv[]) {
     field_transform.field_height = currentHeight; // Gesamte Fensterhöhe
     field_transform.offset_x = 0;                 // Kein Offset - gesamte Fläche nutzen
     field_transform.offset_y = 0;                 // Kein Offset - gesamte Fläche nutzen
-    
-    std::cout << "=== PDS-T1000-TSA24 PUNKT-FAHRZEUG-ERKENNUNGSSYSTEM ===" << std::endl;
-    std::cout << "Gesamte Fensterfläche repräsentiert den Crop-Bereich" << std::endl;
-    std::cout << "Fenster: " << currentWidth << "x" << currentHeight << " Pixel" << std::endl;
-    std::cout << "" << std::endl;
-    std::cout << "🎯 VERWENDUNG:" << std::endl;
-    std::cout << "NORMALE NUTZUNG: .\\main.exe" << std::endl;
-    std::cout << "VOLLBILD MONITOR 2: .\\main.exe --monitor2" << std::endl;
-    std::cout << "VOLLBILD AKTUELLER MONITOR: .\\main.exe --fullscreen" << std::endl;
-    std::cout << "" << std::endl;
-    std::cout << "ESC oder Fenster schließen = Beenden" << std::endl;
-    std::cout << "+/- Tasten = Toleranz anpassen (Debug)" << std::endl;
-    std::cout << "=================================================" << std::endl;
     
     // EINFACHE HAUPTSCHLEIFE
     while (!WindowShouldClose()) {
