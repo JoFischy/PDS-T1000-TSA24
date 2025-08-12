@@ -8,6 +8,7 @@ class SimpleCoordinateDetector:
     """
     Einfache Koordinaten-Erkennung die normalisierte Koordinaten 
     relativ zum Crop-Bereich exportiert für C++ Weiterverarbeitung
+    Automatische Fenster-Positionierung auf Monitor 3
     """
 
     def __init__(self):
@@ -38,6 +39,12 @@ class SimpleCoordinateDetector:
         self.windows_created = set()
         self.main_windows_positioned = False
 
+        # Monitor 3 Setup für automatische Fensterpositionierung
+        self.monitor3_offset_x = 0
+        self.monitor3_offset_y = 0
+        self.use_monitor3 = False
+        self.detect_monitor3_position()
+
         # Farbdefinitionen (HSV) - FINAL OPTIMIERT
         self.color_definitions = {
             'Front': [114, 255, 150],
@@ -56,12 +63,318 @@ class SimpleCoordinateDetector:
             'Heck4': {'h': 6, 's': 117, 'v': 46}
         }
 
+    def detect_monitor3_position(self):
+        """Erkenne Position für CV2-Fenster (bevorzugt Monitor 3, wenn verfügbar)"""
+        try:
+            # Standard: Verwende Monitor 3 Position, wird aber von C++ überschrieben
+            # Diese Funktion wird hauptsächlich für Fallback verwendet
+            self.monitor3_offset_x = 0
+            self.monitor3_offset_y = 0
+            self.use_monitor3 = False  # Wird von C++ aktiviert
+            print("CV2-Fenster-Positionierung bereit - wartet auf C++ Konfiguration")
+            
+        except Exception as e:
+            print(f"Monitor-Erkennung fehlgeschlagen: {e}")
+            self.use_monitor3 = False
+
+    def enable_monitor3_mode(self):
+        """Aktiviere CV2-Fenster auf separatem Monitor (nicht Monitor 2 wo Raylib läuft)"""
+        self.use_monitor3 = True
+        print("CV2-Fenster werden auf separatem Monitor positioniert (nicht auf Raylib-Monitor)")
+
+    def disable_monitor3_mode(self):
+        """Deaktiviere separaten Monitor - Standard-Positionen werden verwendet"""
+        self.use_monitor3 = False
+        print("Separate Monitor-Positionierung deaktiviert - Standard-Positionen werden verwendet")
+
+    def move_existing_windows_to_monitor3(self):
+        """Verschiebe alle bereits erstellten Fenster auf Monitor 3"""
+        if not self.use_monitor3:
+            return
+            
+        print(f"Verschiebe alle CV2-Fenster auf Monitor 3 (Offset: {self.monitor3_offset_x}, {self.monitor3_offset_y})")
+        
+        # Liste aller möglichen Fenster
+        windows_to_move = [
+            "Einstellungen",
+            "Koordinaten-Erkennung", 
+            "Crop-Bereich"
+        ]
+        
+        # HSV-Fenster hinzufügen
+        for color_name in self.color_definitions.keys():
+            windows_to_move.append(f"HSV-{color_name}")
+            windows_to_move.append(f"Filter-{color_name}")
+        
+        # Alle Fenster verschieben
+        moved_count = 0
+        for window_name in windows_to_move:
+            try:
+                if window_name in self.windows_created or window_name in ["Koordinaten-Erkennung", "Crop-Bereich"]:
+                    # Berechne neue Position
+                    if window_name == "Einstellungen":
+                        new_x = 50 + self.monitor3_offset_x
+                        new_y = 50 + self.monitor3_offset_y
+                    elif window_name == "Koordinaten-Erkennung":
+                        new_x = 100 + self.monitor3_offset_x
+                        new_y = 100 + self.monitor3_offset_y
+                    elif window_name == "Crop-Bereich":
+                        new_x = 800 + self.monitor3_offset_x
+                        new_y = 100 + self.monitor3_offset_y
+                    elif window_name.startswith("HSV-"):
+                        # HSV-Fenster positions
+                        color_index = list(self.color_definitions.keys()).index(window_name.replace("HSV-", ""))
+                        base_positions = [(50, 700), (350, 700), (650, 700), (950, 700), (1250, 700)]
+                        if color_index < len(base_positions):
+                            base_x, base_y = base_positions[color_index]
+                            new_x = base_x + self.monitor3_offset_x
+                            new_y = base_y + self.monitor3_offset_y
+                        else:
+                            continue
+                    elif window_name.startswith("Filter-"):
+                        # Filter-Fenster positions
+                        color_index = list(self.color_definitions.keys()).index(window_name.replace("Filter-", ""))
+                        base_positions = [(50, 400), (350, 400), (650, 400), (950, 400), (1250, 400)]
+                        if color_index < len(base_positions):
+                            base_x, base_y = base_positions[color_index]
+                            new_x = base_x + self.monitor3_offset_x
+                            new_y = base_y + self.monitor3_offset_y
+                        else:
+                            continue
+                    else:
+                        continue
+                    
+                    # Fenster verschieben
+                    cv2.moveWindow(window_name, new_x, new_y)
+                    moved_count += 1
+                    
+            except Exception as e:
+                # Fenster existiert möglicherweise nicht - das ist okay
+                pass
+                
+        print(f"Monitor 3: {moved_count} Fenster erfolgreich verschoben")
+
+    def load_window_positions(self):
+        """Lade gespeicherte Fenster-Positionen"""
+        try:
+            with open(self.window_positions_file, 'r') as f:
+                self.saved_positions = json.load(f)
+            print(f"Fenster-Positionen geladen: {len(self.saved_positions)} Einträge")
+        except FileNotFoundError:
+            print("Keine gespeicherten Fenster-Positionen gefunden - verwende Standard-Positionen")
+            self.saved_positions = {}
+        except Exception as e:
+            print(f"Fehler beim Laden der Fenster-Positionen: {e}")
+            self.saved_positions = {}
+
+    def get_real_window_positions(self):
+        """Hole echte Fenster-Positionen mit verschiedenen Methoden"""
+        real_positions = {}
+        
+        # Methode 1: pygetwindow
+        if PYGETWINDOW_AVAILABLE:
+            try:
+                all_windows = gw.getAllWindows()
+                target_windows = [
+                    "Einstellungen", "Koordinaten-Erkennung", "Crop-Bereich"
+                ]
+                for color_name in self.color_definitions.keys():
+                    target_windows.append(f"HSV-{color_name}")
+                    target_windows.append(f"Filter-{color_name}")
+                
+                for window in all_windows:
+                    if window.title in target_windows:
+                        try:
+                            real_positions[window.title] = {
+                                "x": window.left,
+                                "y": window.top,
+                                "width": window.width,
+                                "height": window.height
+                            }
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"pygetwindow Fehler: {e}")
+        
+        # Methode 2: Windows API (wenn pygetwindow nicht funktioniert)
+        if not real_positions and WINDOWS_API_AVAILABLE:
+            try:
+                def enum_windows_callback(hwnd, windows_dict):
+                    window_title = win32gui.GetWindowText(hwnd)
+                    if window_title and any(target in window_title for target in [
+                        "Einstellungen", "Koordinaten-Erkennung", "Crop-Bereich", "HSV-", "Filter-"
+                    ]):
+                        try:
+                            rect = win32gui.GetWindowRect(hwnd)
+                            windows_dict[window_title] = {
+                                "x": rect[0],
+                                "y": rect[1], 
+                                "width": rect[2] - rect[0],
+                                "height": rect[3] - rect[1]
+                            }
+                        except Exception:
+                            pass
+                    return True
+                
+                win32gui.EnumWindows(enum_windows_callback, real_positions)
+                
+            except Exception as e:
+                print(f"Windows API Fehler: {e}")
+                
+        if real_positions:
+            print(f"Echte Fenster-Positionen gefunden: {len(real_positions)} Fenster")
+        else:
+            print("Keine echten Fenster-Positionen verfügbar - verwende geschätzte Positionen")
+            
+        return real_positions
+
+    def update_real_positions(self):
+        """Periodische Aktualisierung der echten Fenster-Positionen während der Laufzeit"""
+        print("LIVE-DEBUG: Starte echte Fenster-Positionserfassung...")
+        real_positions = self.get_real_window_positions()
+        if real_positions:
+            # Aktualisiere die gespeicherten Positionen mit echten Werten
+            for window_name, pos_data in real_positions.items():
+                if window_name not in self.saved_positions:
+                    self.saved_positions[window_name] = {}
+                
+                self.saved_positions[window_name].update({
+                    "x": pos_data["x"],
+                    "y": pos_data["y"],
+                    "real_position": True,
+                    "monitor_offset_x": self.monitor3_offset_x,
+                    "monitor_offset_y": self.monitor3_offset_y
+                })
+            
+            print(f"Live-Update: {len(real_positions)} echte Fenster-Positionen erfasst")
+        else:
+            print("LIVE-DEBUG: Keine echten Fenster-Positionen gefunden")
+
+    def save_window_positions(self):
+        """Speichere aktuelle Fenster-Positionen (echte Positionen wenn möglich)"""
+        try:
+            positions_to_save = {}
+            
+            # Versuche echte Fenster-Positionen zu holen
+            real_positions = self.get_real_window_positions()
+            
+            if real_positions:
+                print("Verwende echte Fenster-Positionen von pygetwindow")
+                for window_name, pos_data in real_positions.items():
+                    positions_to_save[window_name] = {
+                        "x": pos_data["x"],
+                        "y": pos_data["y"],
+                        "real_position": True
+                    }
+            else:
+                print("Verwende geschätzte Positionen basierend auf Monitor-Setup")
+                # Fallback: Verwende berechnete Positionen
+                windows_to_save = [
+                    "Einstellungen",
+                    "Koordinaten-Erkennung", 
+                    "Crop-Bereich"
+                ]
+                
+                # HSV-Fenster hinzufügen
+                for color_name in self.color_definitions.keys():
+                    windows_to_save.append(f"HSV-{color_name}")
+                    windows_to_save.append(f"Filter-{color_name}")
+                
+                # Berechnete Positionen verwenden
+                for window_name in windows_to_save:
+                    try:
+                        if self.use_monitor3:
+                            if window_name == "Einstellungen":
+                                pos_x = 50 + self.monitor3_offset_x
+                                pos_y = 50 + self.monitor3_offset_y
+                            elif window_name == "Koordinaten-Erkennung":
+                                pos_x = 100 + self.monitor3_offset_x
+                                pos_y = 100 + self.monitor3_offset_y
+                            elif window_name == "Crop-Bereich":
+                                pos_x = 800 + self.monitor3_offset_x
+                                pos_y = 100 + self.monitor3_offset_y
+                            elif window_name.startswith("HSV-"):
+                                color_index = list(self.color_definitions.keys()).index(window_name.replace("HSV-", ""))
+                                base_positions = [(50, 700), (350, 700), (650, 700), (950, 700), (1250, 700)]
+                                if color_index < len(base_positions):
+                                    base_x, base_y = base_positions[color_index]
+                                    pos_x = base_x + self.monitor3_offset_x
+                                    pos_y = base_y + self.monitor3_offset_y
+                                else:
+                                    continue
+                            elif window_name.startswith("Filter-"):
+                                color_index = list(self.color_definitions.keys()).index(window_name.replace("Filter-", ""))
+                                base_positions = [(50, 400), (350, 400), (650, 400), (950, 400), (1250, 400)]
+                                if color_index < len(base_positions):
+                                    base_x, base_y = base_positions[color_index]
+                                    pos_x = base_x + self.monitor3_offset_x
+                                    pos_y = base_y + self.monitor3_offset_y
+                                else:
+                                    continue
+                            else:
+                                continue
+                            
+                            positions_to_save[window_name] = {
+                                "x": pos_x, 
+                                "y": pos_y,
+                                "monitor_offset_x": self.monitor3_offset_x,
+                                "monitor_offset_y": self.monitor3_offset_y,
+                                "real_position": False
+                            }
+                            
+                    except Exception:
+                        pass
+            
+            # Speichere Positionen in Datei
+            with open(self.window_positions_file, 'w') as f:
+                json.dump(positions_to_save, f, indent=2)
+            
+            print(f"Fenster-Positionen gespeichert: {len(positions_to_save)} Fenster")
+            
+        except Exception as e:
+            print(f"Fehler beim Speichern der Fenster-Positionen: {e}")
+
+    def apply_saved_window_positions(self):
+        """Wende gespeicherte Fenster-Positionen an"""
+        if not self.saved_positions:
+            return
+            
+        print("Wende gespeicherte Fenster-Positionen an...")
+        applied_count = 0
+        
+        for window_name, pos_data in self.saved_positions.items():
+            try:
+                if window_name in self.windows_created or window_name in ["Koordinaten-Erkennung", "Crop-Bereich"]:
+                    x = pos_data.get("x", 0)
+                    y = pos_data.get("y", 0)
+                    
+                    cv2.moveWindow(window_name, x, y)
+                    applied_count += 1
+                    
+            except Exception:
+                pass
+                
+        print(f"Gespeicherte Positionen angewendet: {applied_count} Fenster")
+
+    def cleanup_and_save(self):
+        """Automatisches Speichern beim Programm-Ende (wird von atexit aufgerufen)"""
+        try:
+            if hasattr(self, 'saved_positions') and hasattr(self, 'window_positions_file'):
+                self.save_window_positions()
+                print("Fenster-Positionen automatisch beim Beenden gespeichert!")
+        except Exception as e:
+            print(f"Fehler beim automatischen Speichern: {e}")
+
     def create_trackbars(self):
         """Erstelle Schieberegler"""
+        # Berechne Position für Monitor 3
+        settings_x = 50 + (self.monitor3_offset_x if self.use_monitor3 else 0)
+        settings_y = 50 + (self.monitor3_offset_y if self.use_monitor3 else 0)
+        
         if 'Einstellungen' not in self.windows_created:
             cv2.namedWindow('Einstellungen', cv2.WINDOW_NORMAL)
             cv2.resizeWindow('Einstellungen', 400, 600)
-            cv2.moveWindow('Einstellungen', 50, 50)
+            cv2.moveWindow('Einstellungen', settings_x, settings_y)
             self.windows_created.add('Einstellungen')
 
         cv2.createTrackbar('Mindest-Groesse', 'Einstellungen', self.min_size, 300, lambda x: None)
@@ -80,11 +393,18 @@ class SimpleCoordinateDetector:
 
     def create_hsv_trackbars_for_colors(self):
         """Erstelle HSV-Trackbar-Fenster für jede Farbe"""
-        # Positionierung für 5 Fenster (wie vorher)
-        window_positions = [
+        # Basispositionen für 5 Fenster
+        base_positions = [
             (50, 700), (350, 700), (650, 700),    # Erste Reihe
             (950, 700), (1250, 700)               # Zweite Reihe
         ]
+        
+        # Anpassung für Monitor 3
+        window_positions = []
+        for base_x, base_y in base_positions:
+            adjusted_x = base_x + (self.monitor3_offset_x if self.use_monitor3 else 0)
+            adjusted_y = base_y + (self.monitor3_offset_y if self.use_monitor3 else 0)
+            window_positions.append((adjusted_x, adjusted_y))
 
         pos_index = 0
         for color_name in self.color_definitions.keys():
@@ -107,38 +427,18 @@ class SimpleCoordinateDetector:
             cv2.createTrackbar('V-Toleranz', window_name, self.hsv_tolerances[color_name]['v'], 255, lambda x: None)
 
     def create_or_update_window(self, window_name, width, height, x, y):
-        """Erstelle Fenster nur einmal und positioniere es"""
+        """Erstelle Fenster nur einmal und positioniere es auf Monitor 3"""
+        # Anpassung für Monitor 3
+        adjusted_x = x + (self.monitor3_offset_x if self.use_monitor3 else 0)
+        adjusted_y = y + (self.monitor3_offset_y if self.use_monitor3 else 0)
+        
         if window_name not in self.windows_created:
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(window_name, width, height)
-            cv2.moveWindow(window_name, x, y)
+            cv2.moveWindow(window_name, adjusted_x, adjusted_y)
             self.windows_created.add(window_name)
             return True  # Neu erstellt
         return False  # Bereits vorhanden
-
-    def create_hsv_trackbars_for_colors(self):
-        """Erstelle HSV-Schieberegler-Fenster für jede Farbe"""
-        window_positions = [
-            (50, 700), (350, 700), (650, 700),    # Erste Reihe
-            (950, 700), (1250, 700)               # Zweite Reihe
-        ]
-
-        pos_index = 0
-        for color_name in self.color_definitions.keys():
-            window_name = f"HSV-{color_name}"
-
-            # Erstelle verschiebares Fenster
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.resizeWindow(window_name, 280, 150)
-
-            if pos_index < len(window_positions):
-                cv2.moveWindow(window_name, window_positions[pos_index][0], window_positions[pos_index][1])
-                pos_index += 1
-
-            # Nur HSV-Toleranz-Trackbars (Gewichtung entfernt)
-            cv2.createTrackbar('H-Toleranz', window_name, self.hsv_tolerances[color_name]['h'], 90, lambda x: None)
-            cv2.createTrackbar('S-Toleranz', window_name, self.hsv_tolerances[color_name]['s'], 255, lambda x: None)
-            cv2.createTrackbar('V-Toleranz', window_name, self.hsv_tolerances[color_name]['v'], 255, lambda x: None)
 
     def get_trackbar_values(self):
         """Lese Trackbar-Werte"""
@@ -605,6 +905,7 @@ class SimpleCoordinateDetector:
         print("=== EINFACHE KOORDINATEN-ERKENNUNG ===")
         print("Koordinaten werden für C++ normalisiert (0,0 = oben links)")
         print("ESC = Beenden, F = Filtermasken ein/aus")
+        print("Alle Fenster werden automatisch auf Monitor 3 positioniert")
         print("=====================================")
 
         while True:
@@ -674,6 +975,7 @@ class SimpleCoordinateDetector:
             key = cv2.waitKey(30) & 0xFF
             
             if key == 27:  # ESC
+                print("ESC gedrückt - System wird beendet...")
                 break
             elif key == ord('f') or key == ord('F'):  # F = Toggle Filtermasken
                 self.show_filter_masks = not self.show_filter_masks
@@ -802,6 +1104,9 @@ class SimpleCoordinateDetector:
 
     def cleanup(self):
         """Aufräumen"""
+        # Speichere Fenster-Positionen vor dem Schließen
+        self.save_window_positions()
+        
         if self.cap:
             self.cap.release()
 
@@ -884,3 +1189,38 @@ def cleanup_detector():
         _global_detector.cleanup()
         _global_detector = None
         print("Detektor aufgeräumt")
+
+def enable_monitor3_mode():
+    """Aktiviere Monitor 3 Modus für alle CV2-Fenster (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector:
+        _global_detector.enable_monitor3_mode()
+        return True
+    return False
+
+def disable_monitor3_mode():
+    """Deaktiviere Monitor 3 Modus (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector:
+        _global_detector.disable_monitor3_mode()
+        return True
+    return False
+
+def set_monitor3_position(offset_x, offset_y):
+    """Setze manuelle Monitor 3 Position (von C++ aufgerufen)"""
+    global _global_detector
+    if _global_detector:
+        _global_detector.monitor3_offset_x = int(offset_x)
+        _global_detector.monitor3_offset_y = int(offset_y)
+        _global_detector.use_monitor3 = True
+        
+        # WICHTIG: Bereits erstellte Fenster verschieben
+        _global_detector.move_existing_windows_to_monitor3()
+        
+        # Speichere die neuen Positionen
+        _global_detector.save_window_positions()
+        
+        print(f"Monitor 3 Position für CV2-Fenster gesetzt: {offset_x}, {offset_y}")
+        print("Alle CV2-Fenster werden ab sofort auf Monitor 3 positioniert")
+        return True
+    return False

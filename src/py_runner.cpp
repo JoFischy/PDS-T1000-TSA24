@@ -4,6 +4,7 @@
 
 static bool python_initialized = false;
 static bool detector_initialized = false;
+static bool monitor_configured = false;
 
 bool initializePython() {
     if (python_initialized) return true;
@@ -186,6 +187,16 @@ std::vector<DetectedObject> get_detected_coordinates() {
     return runPythonDetection();
 }
 
+// Neue Funktion um Monitor-Position nachträglich zu setzen
+void configure_monitor_position_delayed(int offset_x, int offset_y) {
+    if (!monitor_configured && detector_initialized) {
+        if (set_python_monitor3_position(offset_x, offset_y)) {
+            monitor_configured = true;
+            std::cout << "Monitor-Position nachträglich erfolgreich konfiguriert: " << offset_x << ", " << offset_y << std::endl;
+        }
+    }
+}
+
 void cleanup_coordinate_detector() {
     try {
         // Import Farberkennung module
@@ -228,4 +239,116 @@ void cleanup_vehicle_fleet() {
 
 void handle_opencv_events() {
     // Placeholder
+}
+
+// === MONITOR 3 FUNKTIONEN ===
+bool enable_python_monitor3_mode() {
+    if (!initializePython()) {
+        return false;
+    }
+    
+    try {
+        PyObject* pModule = PyImport_ImportModule("Farberkennung");
+        if (!pModule) {
+            PyErr_Print();
+            return false;
+        }
+        
+        PyObject* pFunc = PyObject_GetAttrString(pModule, "enable_monitor3_mode");
+        if (!pFunc || !PyCallable_Check(pFunc)) {
+            PyErr_Print();
+            Py_DECREF(pModule);
+            return false;
+        }
+        
+        PyObject* pResult = PyObject_CallObject(pFunc, nullptr);
+        bool success = false;
+        if (pResult) {
+            success = PyObject_IsTrue(pResult);
+            Py_DECREF(pResult);
+        }
+        
+        Py_DECREF(pFunc);
+        Py_DECREF(pModule);
+        return success;
+    } catch (...) {
+        std::cerr << "Exception during enable_monitor3_mode" << std::endl;
+        return false;
+    }
+}
+
+bool disable_python_monitor3_mode() {
+    if (!initializePython()) {
+        return false;
+    }
+    
+    try {
+        PyObject* pModule = PyImport_ImportModule("Farberkennung");
+        if (!pModule) {
+            PyErr_Print();
+            return false;
+        }
+        
+        PyObject* pFunc = PyObject_GetAttrString(pModule, "disable_monitor3_mode");
+        if (!pFunc || !PyCallable_Check(pFunc)) {
+            PyErr_Print();
+            Py_DECREF(pModule);
+            return false;
+        }
+        
+        PyObject* pResult = PyObject_CallObject(pFunc, nullptr);
+        bool success = false;
+        if (pResult) {
+            success = PyObject_IsTrue(pResult);
+            Py_DECREF(pResult);
+        }
+        
+        Py_DECREF(pFunc);
+        Py_DECREF(pModule);
+        return success;
+    } catch (...) {
+        std::cerr << "Exception during disable_monitor3_mode" << std::endl;
+        return false;
+    }
+}
+
+bool set_python_monitor3_position(int offset_x, int offset_y) {
+    if (!initializePython()) {
+        return false;
+    }
+    
+    try {
+        PyObject* pModule = PyImport_ImportModule("Farberkennung");
+        if (!pModule) {
+            PyErr_Print();
+            return false;
+        }
+        
+        PyObject* pFunc = PyObject_GetAttrString(pModule, "set_monitor3_position");
+        if (!pFunc || !PyCallable_Check(pFunc)) {
+            PyErr_Print();
+            Py_DECREF(pModule);
+            return false;
+        }
+        
+        // Create arguments tuple
+        PyObject* pArgs = PyTuple_New(2);
+        PyTuple_SetItem(pArgs, 0, PyLong_FromLong(offset_x));
+        PyTuple_SetItem(pArgs, 1, PyLong_FromLong(offset_y));
+        
+        PyObject* pResult = PyObject_CallObject(pFunc, pArgs);
+        bool success = false;
+        if (pResult) {
+            success = PyObject_IsTrue(pResult);
+            Py_DECREF(pResult);
+        }
+        
+        Py_DECREF(pArgs);
+        Py_DECREF(pFunc);
+        Py_DECREF(pModule);
+        return success;
+    } catch (...) {
+        std::cerr << "Exception during set_monitor3_position" << std::endl;
+        return false;
+    }
 }
