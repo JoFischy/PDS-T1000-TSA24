@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
         InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
         ToggleFullscreen();
     } else {
-        SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+        SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT); // VSync für weniger Flackern
         InitWindow(screenWidth, screenHeight, "PDS-T1000-TSA24");
         MaximizeWindow();
     }
