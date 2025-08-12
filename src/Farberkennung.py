@@ -50,7 +50,7 @@ class SimpleCoordinateDetector:
             'Front': [114, 255, 150],
             'Heck1': [72, 255, 60],
             'Heck2': [178, 190, 210],
-            'Heck3': [155, 150, 110],
+            'Heck3': [7, 240, 140],
             'Heck4': [11, 160, 255]
         }
 
@@ -59,7 +59,7 @@ class SimpleCoordinateDetector:
             'Front': {'h': 34, 's': 48, 'v': 255},
             'Heck1': {'h': 9, 's': 0, 'v': 255},
             'Heck2': {'h': 8, 's': 103, 'v': 237},
-            'Heck3': {'h': 27, 's': 103, 'v': 41},
+            'Heck3': {'h': 32, 's': 160, 'v': 80},
             'Heck4': {'h': 6, 's': 117, 'v': 46}
         }
 
