@@ -36,7 +36,7 @@ static std::vector<Point> g_points;
 static std::vector<Auto> g_detected_autos;
 static std::mutex g_data_mutex;
 static HWND g_test_window_hwnd = nullptr;
-static float g_tolerance = 100.0f;
+static float g_tolerance = 150.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
 
 // Kalibrierungsparameter für Koordinaten-Anpassung
