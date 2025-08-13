@@ -85,6 +85,12 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
         detectedObjForWindow.push_back(obj);
     }
     updateTestWindowCoordinates(detectedObjForWindow);
+    
+    // Update vehicle commands in JSON (extern function from test_window.cpp)
+    extern void updateVehicleCommands();
+    if (!detectedAutos.empty()) {
+        updateVehicleCommands();
+    }
 }
 
 void CarSimulation::detectVehicles() {
@@ -364,34 +370,44 @@ void CarSimulation::createFactoryPathSystem() {
 void CarSimulation::syncDetectedVehiclesWithPathSystem() {
     if (!pathSystemInitialized || !vehicleController) return;
 
-    // Map detected vehicles to path system vehicles
+    // Erstelle eine Map der aktuell erkannten Fahrzeuge
+    std::map<int, Point> currentDetectedVehicles;
+    
     for (const auto& detectedAuto : detectedAutos) {
         if (!detectedAuto.isValid()) continue;
 
-        int vehicleId = mapDetectedVehicleToPathSystem(detectedAuto);
-        if (vehicleId != -1) {
-            // Transform coordinates from detection space to path system space
-            Point pathSystemPos = transformToPathSystemCoordinates(detectedAuto.getCenter(),
-                                                                   FieldTransform{});
+        Point currentCenter = detectedAuto.getCenter();
+        
+        // Validiere Koordinaten
+        if (currentCenter.x <= 0 || currentCenter.y <= 0 || 
+            currentCenter.x >= 1920 || currentCenter.y >= 1200) {
+            continue;
+        }
 
-            // Store old position for movement detection
-            Auto* pathVehicle = vehicleController->getVehicle(vehicleId);
-            Point oldPosition = pathVehicle ? pathVehicle->position : Point(0, 0);
+        int vehicleId = detectedAuto.getId();
+        currentDetectedVehicles[vehicleId] = currentCenter;
 
-            // Update vehicle position in path system
-            vehicleController->updateVehicleFromRealCoordinates(vehicleId, pathSystemPos,
-                                                              detectedAuto.getDirection());
+        // Map to path system vehicle
+        Auto* pathVehicle = vehicleController->getVehicle(vehicleId);
+        if (!pathVehicle) {
+            // Erstelle neues Fahrzeug im Path System
+            Point pathSystemPos = transformToPathSystemCoordinates(currentCenter, FieldTransform{});
+            vehicleId = vehicleController->addVehicle(pathSystemPos);
+            pathVehicle = vehicleController->getVehicle(vehicleId);
+        }
 
-            // Check if vehicle was moved significantly (manual movement)
-            if (pathVehicle && oldPosition.distanceTo(pathSystemPos) > 100.0f) {
-                // Vehicle was moved manually, check if route needs adjustment
-                if (pathVehicle->targetNodeId != -1 && pathVehicle->currentNodeId != -1) {
-                    // Try to replan path from new position
-                    if (!vehicleController->planPath(vehicleId, pathVehicle->targetNodeId)) {
-                        std::cout << "Vehicle " << vehicleId << " route could not be replanned from new position" << std::endl;
-                    } else {
-                        std::cout << "Vehicle " << vehicleId << " route automatically adjusted due to manual movement" << std::endl;
-                    }
+        if (pathVehicle) {
+            Point pathSystemPos = transformToPathSystemCoordinates(currentCenter, FieldTransform{});
+            
+            // Direkte Aktualisierung ohne zu viel Filterung
+            vehicleController->updateVehicleFromRealCoordinates(vehicleId, pathSystemPos, detectedAuto.getDirection());
+            
+            // Automatisch nächsten Knoten finden wenn Fahrzeug keinen hat
+            if (pathVehicle->currentNodeId == -1) {
+                int nearestNode = pathSystem.findNearestNode(pathSystemPos, 150.0f);
+                if (nearestNode != -1) {
+                    pathVehicle->currentNodeId = nearestNode;
+                    std::cout << "Vehicle " << vehicleId << " auto-assigned to nearest node " << nearestNode << std::endl;
                 }
             }
         }

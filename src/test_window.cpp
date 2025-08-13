@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
 #include "Vehicle.h"
 #include "auto.h"
 #include "point.h"
@@ -41,9 +42,24 @@ static HWND g_test_window_hwnd = nullptr;
 static float g_tolerance = 150.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
 
+// Persistente Fahrzeuge (bleiben auch bei kurzen Erkennungsaussetzern)
+struct PersistentVehicle {
+    Auto vehicle;
+    std::chrono::steady_clock::time_point lastSeen;
+    bool justUpdated;
+    
+    PersistentVehicle(const Auto& v) : vehicle(v), lastSeen(std::chrono::steady_clock::now()), justUpdated(true) {}
+};
+static std::vector<PersistentVehicle> g_persistent_vehicles;
+static std::mutex g_persistent_mutex;
+static const auto MAX_VEHICLE_AGE = std::chrono::seconds(3); // Fahrzeuge 3 Sekunden merken
+
 // Globale Variablen für PathSystem und VehicleController
 static const PathSystem* g_path_system = nullptr;
 static const VehicleController* g_vehicle_controller = nullptr;
+
+// Globale Variablen für Fahrzeugauswahl
+static int g_selected_vehicle_id = -1;
 
 // Kalibrierungsparameter für Koordinaten-Anpassung
 static float g_x_scale = 1.0f;          // X-Skalierung (Standard: 1.0)
@@ -235,17 +251,37 @@ void transformCropToFullscreen(float crop_x, float crop_y, float crop_width, flo
     // Die crop_x und crop_y sind bereits Pixel-Koordinaten im Crop-Bereich
     // Diese werden direkt auf 1920x1200 Vollbild skaliert
 
-    if (crop_width > 0 && crop_height > 0) {
+    if (crop_width > 0 && crop_height > 0 && crop_x >= 0 && crop_y >= 0) {
         // Normalisiere auf 0.0 bis 1.0 basierend auf Crop-Größe
         float norm_x = crop_x / crop_width;
         float norm_y = crop_y / crop_height;
 
-        // Skaliere direkt auf 1920x1200 Vollbild
-        fullscreen_x = norm_x * FULLSCREEN_WIDTH;
-        fullscreen_y = norm_y * FULLSCREEN_HEIGHT;
+        // Skaliere direkt auf 1920x1200 Vollbild mit Kalibrierung
+        fullscreen_x = (norm_x * FULLSCREEN_WIDTH * g_x_scale) + g_x_offset;
+        fullscreen_y = (norm_y * FULLSCREEN_HEIGHT * g_y_scale) + g_y_offset;
+
+        // Kurvenkorrektur anwenden
+        float center_x = FULLSCREEN_WIDTH / 2.0f;
+        float center_y = FULLSCREEN_HEIGHT / 2.0f;
+        float x_diff = fullscreen_x - center_x;
+        float y_diff = fullscreen_y - center_y;
+
+        fullscreen_x += x_diff * g_x_curve;
+        fullscreen_y += y_diff * g_y_curve;
+
+        // Gültigkeitsprüfung - verhindere 0/0 Sprünge
+        if (fullscreen_x < 0 || fullscreen_x > FULLSCREEN_WIDTH || 
+            fullscreen_y < 0 || fullscreen_y > FULLSCREEN_HEIGHT) {
+            printf("WARNING: Invalid transformed coordinates (%.2f, %.2f) - using fallback\n", fullscreen_x, fullscreen_y);
+            fullscreen_x = center_x;  // Fallback zur Mitte statt 0/0
+            fullscreen_y = center_y;
+        }
     } else {
-        fullscreen_x = 0.0f;
-        fullscreen_y = 0.0f;
+        printf("WARNING: Invalid input coordinates: crop_x=%.2f, crop_y=%.2f, crop_size=(%.2f, %.2f)\n", 
+               crop_x, crop_y, crop_width, crop_height);
+        // Fallback zur Mitte statt 0/0
+        fullscreen_x = FULLSCREEN_WIDTH / 2.0f;
+        fullscreen_y = FULLSCREEN_HEIGHT / 2.0f;
     }
 }
 
@@ -384,88 +420,7 @@ void drawPathSegmentGDI(HDC hdc, const PathSegment& segment, const PathSystem& p
     DeleteObject(pen);
 }
 
-// Zeichne Fahrzeugroute
-void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSystem) {
-    if (!g_vehicle_controller) return;
-
-    // Finde das entsprechende Vehicle im Controller
-    const auto& vehicles = g_vehicle_controller->getVehicles();
-    for (const auto& controllerVehicle : vehicles) {
-        if (controllerVehicle.vehicleId == vehicle.getId()) {
-            if (controllerVehicle.currentPath.empty()) continue;
-
-            // Routenfarbe basierend auf Fahrzeug-ID
-            COLORREF routeColors[] = {
-                RGB(0, 255, 0),   // Grün
-                RGB(255, 255, 0), // Gelb  
-                RGB(255, 165, 0), // Orange
-                RGB(128, 0, 128)  // Lila
-            };
-            COLORREF routeColor = routeColors[vehicle.getId() % 4];
-
-            HPEN routePen = CreatePen(PS_SOLID, 6, routeColor);
-            HGDIOBJ oldPen = SelectObject(hdc, routePen);
-
-            // Zeichne Routensegmente
-            for (size_t i = controllerVehicle.currentSegmentIndex; i < controllerVehicle.currentPath.size(); i++) {
-                int segmentId = controllerVehicle.currentPath[i];
-                const PathSegment* segment = pathSystem.getSegment(segmentId);
-
-                if (segment) {
-                    const PathNode* startNode = pathSystem.getNode(segment->startNodeId);
-                    const PathNode* endNode = pathSystem.getNode(segment->endNodeId);
-
-                    if (startNode && endNode) {
-                        // Aktuelles Segment dicker zeichnen
-                        if (i == controllerVehicle.currentSegmentIndex) {
-                            SelectObject(hdc, oldPen);
-                            DeleteObject(routePen);
-                            routePen = CreatePen(PS_SOLID, 8, routeColor);
-                            SelectObject(hdc, routePen);
-                        }
-
-                        // Verwende direkte Koordinaten für Vollbild
-                        Point startPos = mapToFullscreenCoordinates(startNode->position.x, startNode->position.y);
-                        Point endPos = mapToFullscreenCoordinates(endNode->position.x, endNode->position.y);
-
-                        MoveToEx(hdc, static_cast<int>(startPos.x), 
-                                static_cast<int>(startPos.y), nullptr);
-                        LineTo(hdc, static_cast<int>(endPos.x), 
-                               static_cast<int>(endPos.y));
-                    }
-                }
-            }
-
-            SelectObject(hdc, oldPen);
-            DeleteObject(routePen);
-
-            // Zeichne Zielknoten
-            if (controllerVehicle.targetNodeId != -1) {
-                const PathNode* targetNode = pathSystem.getNode(controllerVehicle.targetNodeId);
-                if (targetNode) {
-                    // Verwende direkte Koordinaten für Zielknoten
-                    Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
-
-                    HBRUSH targetBrush = CreateSolidBrush(routeColor);
-                    HGDIOBJ oldBrush = SelectObject(hdc, targetBrush);
-
-                    int targetRadius = 20;
-                    Ellipse(hdc, 
-                            static_cast<int>(targetPos.x - targetRadius), 
-                            static_cast<int>(targetPos.y - targetRadius),
-                            static_cast<int>(targetPos.x + targetRadius), 
-                            static_cast<int>(targetPos.y + targetRadius));
-
-                    SelectObject(hdc, oldBrush);
-                    DeleteObject(targetBrush);
-                }
-            }
-            break;
-        }
-    }
-}
-
-// Zeichne einen Punkt (bereits in Vollbild-Koordinaten)
+// Zeichne ein Punkt (bereits in Vollbild-Koordinaten)
 void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
     // Point ist bereits in 1920x1200 Koordinaten transformiert
     Point fullscreenPoint = point;
@@ -507,6 +462,171 @@ void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
     }
 }
 
+// Verwaltung persistenter Fahrzeuge
+void updatePersistentVehicles(const std::vector<Auto>& newDetections) {
+    std::lock_guard<std::mutex> lock(g_persistent_mutex);
+    auto now = std::chrono::steady_clock::now();
+    
+    // Markiere alle als nicht aktualisiert
+    for (auto& persistent : g_persistent_vehicles) {
+        persistent.justUpdated = false;
+    }
+    
+    // Aktualisiere oder füge neue Fahrzeuge hinzu
+    for (const auto& newVehicle : newDetections) {
+        if (!newVehicle.isValid()) continue;
+        
+        bool found = false;
+        for (auto& persistent : g_persistent_vehicles) {
+            // Fahrzeug gefunden (gleiche ID oder sehr nahe Position)
+            if (persistent.vehicle.getId() == newVehicle.getId() || 
+                persistent.vehicle.getCenter().distanceTo(newVehicle.getCenter()) < 100.0f) {
+                
+                // Sanfte Position Update
+                Point oldPos = persistent.vehicle.getCenter();
+                Point newPos = newVehicle.getCenter();
+                
+                // Interpoliere Position um sanfte Bewegung zu erreichen
+                float alpha = 0.7f; // Gewichtung für neue Position
+                Point smoothPos;
+                smoothPos.x = oldPos.x * (1.0f - alpha) + newPos.x * alpha;
+                smoothPos.y = oldPos.y * (1.0f - alpha) + newPos.y * alpha;
+                
+                // Update des Fahrzeugs mit sanfter Position
+                persistent.vehicle = newVehicle;
+                persistent.vehicle.setPosition(smoothPos);
+                persistent.lastSeen = now;
+                persistent.justUpdated = true;
+                found = true;
+                break;
+            }
+        }
+        
+        // Neues Fahrzeug hinzufügen
+        if (!found) {
+            g_persistent_vehicles.emplace_back(newVehicle);
+        }
+    }
+    
+    // Entferne zu alte Fahrzeuge
+    g_persistent_vehicles.erase(
+        std::remove_if(g_persistent_vehicles.begin(), g_persistent_vehicles.end(),
+            [now](const PersistentVehicle& pv) {
+                return (now - pv.lastSeen) > MAX_VEHICLE_AGE;
+            }),
+        g_persistent_vehicles.end()
+    );
+}
+
+std::vector<Auto> getPersistentVehicles() {
+    std::lock_guard<std::mutex> lock(g_persistent_mutex);
+    std::vector<Auto> result;
+    
+    for (const auto& persistent : g_persistent_vehicles) {
+        result.push_back(persistent.vehicle);
+    }
+    
+    return result;
+}
+
+// JSON-Commands für Fahrzeugsteuerung schreiben
+void updateVehicleCommands() {
+    if (!g_vehicle_controller || !g_path_system) return;
+
+    // JSON-Datei erstellen/überschreiben
+    std::ofstream jsonFile("vehicle_commands.json");
+    jsonFile << "{\n  \"vehicles\": [\n";
+
+    bool firstVehicle = true;
+    std::vector<Auto> current_autos;
+    {
+        std::lock_guard<std::mutex> lock(g_data_mutex);
+        current_autos = g_detected_autos;
+    }
+
+    for (const Auto& auto_ : current_autos) {
+        if (!auto_.isValid()) continue;
+
+        if (!firstVehicle) jsonFile << ",\n";
+        firstVehicle = false;
+
+        // Finde das entsprechende Vehicle im Controller
+        const auto& vehicles = g_vehicle_controller->getVehicles();
+        int command = 5; // 5 = stehen (default)
+        int nextNodeId = -1;
+
+        for (const auto& controllerVehicle : vehicles) {
+            if (controllerVehicle.vehicleId == auto_.getId()) {
+                if (!controllerVehicle.currentPath.empty() && 
+                    controllerVehicle.currentSegmentIndex < controllerVehicle.currentPath.size()) {
+
+                    int currentSegmentId = controllerVehicle.currentPath[controllerVehicle.currentSegmentIndex];
+                    const PathSegment* segment = g_path_system->getSegment(currentSegmentId);
+
+                    if (segment) {
+                        const PathNode* startNode = g_path_system->getNode(segment->startNodeId);
+                        const PathNode* endNode = g_path_system->getNode(segment->endNodeId);
+
+                        if (startNode && endNode) {
+                            // Bestimme welcher Knoten das Ziel ist
+                            Point currentPos = auto_.getCenter();
+                            float distToStart = currentPos.distanceTo(startNode->position);
+                            float distToEnd = currentPos.distanceTo(endNode->position);
+
+                            if (distToStart > distToEnd) {
+                                nextNodeId = endNode->nodeId;
+                            } else {
+                                nextNodeId = startNode->nodeId;
+                            }
+
+                            // Berechne Bewegungsrichtung basierend auf aktueller Position und Ziel
+                            Point targetPos = (distToStart > distToEnd) ? endNode->position : startNode->position;
+                            Point currentDirection = auto_.getFrontPoint();
+
+                            // Vereinfachte Richtungsberechnung
+                            float dx = targetPos.x - currentPos.x;
+                            float dy = targetPos.y - currentPos.y;
+
+                            // Bestimme Hauptbewegungsrichtung
+                            if (abs(dx) > abs(dy)) {
+                                command = (dx > 0) ? 4 : 3; // 4 = rechts, 3 = links
+                            } else {
+                                command = (dy > 0) ? 2 : 1; // 2 = rückwärts, 1 = vorwärts
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        jsonFile << "    {\n";
+        jsonFile << "      \"vehicle_id\": " << auto_.getId() << ",\n";
+        jsonFile << "      \"current_x\": " << auto_.getCenter().x << ",\n";
+        jsonFile << "      \"current_y\": " << auto_.getCenter().y << ",\n";
+        jsonFile << "      \"next_node_id\": " << nextNodeId << ",\n";
+        jsonFile << "      \"command\": " << command << ",\n";
+        jsonFile << "      \"command_description\": \"";
+
+        switch(command) {
+            case 1: jsonFile << "vorwärts"; break;
+            case 2: jsonFile << "rückwärts"; break;
+            case 3: jsonFile << "links"; break;
+            case 4: jsonFile << "rechts"; break;
+            case 5: jsonFile << "stehen"; break;
+            default: jsonFile << "unbekannt"; break;
+        }
+
+        jsonFile << "\"\n";
+        jsonFile << "    }";
+    }
+
+    jsonFile << "\n  ]\n}";
+    jsonFile.close();
+
+    std::cout << "Vehicle commands updated in vehicle_commands.json" << std::endl;
+}
+
 // Zeichne ein Auto als kompakten Punkt mit Richtungspfeil
 void drawAutoGDI(HDC hdc, const Auto& auto_) {
     if (!auto_.isValid()) return;
@@ -528,10 +648,18 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
         dy /= length;
     }
 
-    // Auto-Mittelpunkt als grüner Kreis
-    HBRUSH autoBrush = CreateSolidBrush(RGB(0, 255, 0));
+    // Auto-Mittelpunkt - unterschiedliche Farbe für ausgewähltes Auto
+    COLORREF autoColor = RGB(0, 255, 0);      // Grün für normale Autos
+    COLORREF borderColor = RGB(0, 180, 0);
+
+    if (auto_.getId() == g_selected_vehicle_id) {
+        autoColor = RGB(255, 0, 255);         // Magenta für ausgewähltes Auto
+        borderColor = RGB(200, 0, 200);
+    }
+
+    HBRUSH autoBrush = CreateSolidBrush(autoColor);
     HGDIOBJ oldBrush = SelectObject(hdc, autoBrush);
-    HPEN autoPen = CreatePen(PS_SOLID, 2, RGB(0, 180, 0));
+    HPEN autoPen = CreatePen(PS_SOLID, 4, borderColor);  // Dicker Rahmen
     HGDIOBJ oldPen = SelectObject(hdc, autoPen);
 
     int radius = 12;
@@ -575,183 +703,363 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     DeleteObject(arrowPen);
 }
 
-LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg) {
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
+// Draw the node network
+void drawNodeNetworkGDI(HDC hdc, const PathSystem& pathSystem) {
+    // Zeichne alle Segmente (Pfade)
+    for (const auto& segment : pathSystem.getSegments()) {
+        drawPathSegmentGDI(hdc, segment, pathSystem);
+    }
 
-            // DOUBLE-BUFFERING für weniger Flackern
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            int width = rect.right - rect.left;
-            int height = rect.bottom - rect.top;
+    // Zeichne alle Knoten
+    for (const auto& node : pathSystem.getNodes()) {
+        drawPathNodeGDI(hdc, node);
+    }
+}
 
-            // Erstelle Memory-DC für Double-Buffering
-            HDC memDC = CreateCompatibleDC(hdc);
-            HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
-            HGDIOBJ oldBitmap = SelectObject(memDC, memBitmap);
+// Zeichne Fahrzeugroute (einzelne Version ohne Duplikate)
+void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSystem) {
+    if (!g_vehicle_controller) return;
 
-            // Weißer Hintergrund
-            FillRect(memDC, &rect, (HBRUSH)GetStockObject(WHITE_BRUSH));
+    // Finde das entsprechende Vehicle im Controller
+    const auto& vehicles = g_vehicle_controller->getVehicles();
+    for (const auto& controllerVehicle : vehicles) {
+        if (controllerVehicle.vehicleId == vehicle.getId()) {
+            if (controllerVehicle.currentPath.empty()) continue;
 
-            // Zeichne Hintergrundbild falls geladen
-            if (g_backgroundBitmap) {
-                HDC bgDC = CreateCompatibleDC(memDC);
-                HGDIOBJ oldBgBitmap = SelectObject(bgDC, g_backgroundBitmap);
+            // Spezielle Hervorhebung für ausgewähltes Fahrzeug
+            COLORREF routeColor;
+            int routeWidth;
 
-                BITMAP bmp;
-                GetObject(g_backgroundBitmap, sizeof(BITMAP), &bmp);
-
-                // Skaliere auf Fenstergröße
-                SetStretchBltMode(memDC, HALFTONE);
-                StretchBlt(memDC, 0, 0, width, height, 
-                          bgDC, 0, 0, bmp.bmWidth, bmp.bmHeight, SRCCOPY);
-
-                SelectObject(bgDC, oldBgBitmap);
-                DeleteDC(bgDC);
+            if (vehicle.getId() == g_selected_vehicle_id) {
+                routeColor = RGB(255, 50, 255);  // Helles Magenta für ausgewähltes Fahrzeug
+                routeWidth = 12;                 // Extra dick für bessere Sichtbarkeit
+            } else {
+                // Standard-Routenfarben (nur schwach sichtbar wenn nicht ausgewählt)
+                COLORREF routeColors[] = {
+                    RGB(100, 200, 100),   // Schwaches Grün
+                    RGB(200, 200, 100),   // Schwaches Gelb  
+                    RGB(200, 150, 100),   // Schwaches Orange
+                    RGB(150, 100, 150)    // Schwaches Lila
+                };
+                routeColor = routeColors[vehicle.getId() % 4];
+                routeWidth = 4; // Dünner für unausgewählte Fahrzeuge
             }
 
-            // Hole aktuelle Daten (Thread-safe)
-            std::vector<Point> current_points;
-            std::vector<Auto> current_autos;
-            {
-                std::lock_guard<std::mutex> lock(g_data_mutex);
-                current_points = g_points;
-                current_autos = g_detected_autos;
-            }
+            HPEN routePen = CreatePen(PS_SOLID, routeWidth, routeColor);
+            HGDIOBJ oldPen = SelectObject(hdc, routePen);
 
-            // Zeichne PathSystem-Elemente (falls verfügbar)
-            if (g_path_system) {
-                // Zeichne zuerst alle Segmente (Pfade)
-                for (const auto& segment : g_path_system->getSegments()) {
-                    drawPathSegmentGDI(memDC, segment, *g_path_system);
-                }
+            // Zeichne komplette Route vom aktuellen Segment bis zum Ziel
+            for (size_t i = controllerVehicle.currentSegmentIndex; i < controllerVehicle.currentPath.size(); i++) {
+                int segmentId = controllerVehicle.currentPath[i];
+                const PathSegment* segment = pathSystem.getSegment(segmentId);
 
-                // Zeichne alle Knoten
-                for (const auto& node : g_path_system->getNodes()) {
-                    drawPathNodeGDI(memDC, node);
-                }
+                if (segment) {
+                    const PathNode* startNode = pathSystem.getNode(segment->startNodeId);
+                    const PathNode* endNode = pathSystem.getNode(segment->endNodeId);
 
-                // Zeichne Fahrzeugrouten
-                for (const Auto& auto_ : current_autos) {
-                    drawVehicleRouteGDI(memDC, auto_, *g_path_system);
-                }
-            }
+                    if (startNode && endNode) {
+                        // Aktuelles Segment extra hervorheben bei ausgewähltem Fahrzeug
+                        if (i == controllerVehicle.currentSegmentIndex && vehicle.getId() == g_selected_vehicle_id) {
+                            SelectObject(hdc, oldPen);
+                            DeleteObject(routePen);
+                            routePen = CreatePen(PS_SOLID, 16, RGB(255, 100, 255)); // Extra dick und hell
+                            SelectObject(hdc, routePen);
+                        }
 
-            // Zeichne erkannte Autos (berechnete Fahrzeuge mit Richtungspfeil)
-            for (const Auto& auto_ : current_autos) {
-                drawAutoGDI(memDC, auto_);
-            }
+                        // Verwende direkte Koordinaten für Vollbild
+                        Point startPos = mapToFullscreenCoordinates(startNode->position.x, startNode->position.y);
+                        Point endPos = mapToFullscreenCoordinates(endNode->position.x, endNode->position.y);
 
-            // UI-Info links oben (minimal wie im Original)
-            SetBkMode(memDC, TRANSPARENT);
-            SetTextColor(memDC, RGB(0, 0, 0));
-            HFONT hFont = CreateFontA(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, 
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, 
-                                     CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, 
-                                     DEFAULT_PITCH | FF_SWISS, "Arial");
-            HGDIOBJ oldFont = SelectObject(memDC, hFont);
+                        MoveToEx(hdc, static_cast<int>(startPos.x), 
+                                static_cast<int>(startPos.y), nullptr);
+                        LineTo(hdc, static_cast<int>(endPos.x), 
+                               static_cast<int>(endPos.y));
 
-            TextOutA(memDC, 10, 10, "PDS-T1000-TSA24 - ZWEITES FENSTER", 45);
-
-            // Fahrzeug-Info
-            int yOffset = 40;
-            HFONT hInfoFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, 
-                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, 
-                                         CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, 
-                                         DEFAULT_PITCH | FF_SWISS, "Arial");
-            SelectObject(memDC, hInfoFont);
-
-            // Draw vehicle information
-            char vehicleInfo[256];
-            snprintf(vehicleInfo, sizeof(vehicleInfo), "Vehicles: %zu", current_autos.size());
-            TextOutA(memDC, 10, yOffset, vehicleInfo, strlen(vehicleInfo));
-            yOffset += 20;
-
-            // Draw detailed vehicle information
-            for (size_t i = 0; i < current_autos.size(); i++) {
-                const Auto& vehicle = current_autos[i];
-                if (vehicle.isValid()) {
-                    Point center = vehicle.getCenter();
-                    float direction = vehicle.getDirection();
-
-                    char detailInfo[256];
-                    snprintf(detailInfo, sizeof(detailInfo), "Auto %d: (%.0f, %.0f) %.0f°", 
-                            vehicle.getId(), center.x, center.y, direction);
-                    TextOutA(memDC, 10, yOffset, detailInfo, strlen(detailInfo));
-                    yOffset += 18;
-                }
-            }
-
-
-            // Kopiere Memory-DC zum Bildschirm (Double-Buffer-Trick)
-            BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
-
-            // Aufräumen
-            SelectObject(memDC, oldFont);
-            SelectObject(memDC, oldBitmap);
-            DeleteObject(hFont);
-            DeleteObject(hInfoFont);
-            DeleteObject(memBitmap);
-            DeleteDC(memDC);
-
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        case WM_LBUTTONDOWN: {
-            // Mausklick für Routenauswahl
-            int mouseX = LOWORD(lParam);
-            int mouseY = HIWORD(lParam);
-
-            if (g_path_system && g_vehicle_controller) {
-                // Mauskoordinaten sind direkt im 1920x1200 Vollbild-Format
-                Point clickPos(static_cast<float>(mouseX), static_cast<float>(mouseY));
-                int nearestNodeId = g_path_system->findNearestNode(clickPos, 100.0f);
-
-                if (nearestNodeId != -1) {
-                    // Hole aktuelle Daten
-                    std::vector<Auto> current_autos;
-                    {
-                        std::lock_guard<std::mutex> lock(g_data_mutex);
-                        current_autos = g_detected_autos;
-                    }
-
-                    // Setze Ziel für das erste gültige Fahrzeug
-                    for (const Auto& auto_ : current_autos) {
-                        if (auto_.isValid()) {
-                            int vehicleId = auto_.getId();
-                            const_cast<VehicleController*>(g_vehicle_controller)->setVehicleTargetNode(vehicleId, nearestNodeId);
-
-                            char message[256];
-                            snprintf(message, sizeof(message), "Auto %d Route zu Knoten %d gesetzt\nKlick: (%.0f, %.0f)", 
-                                    vehicleId, nearestNodeId, (double)mouseX, (double)mouseY);
-                            MessageBoxA(hwnd, message, "Route geplant", MB_OK | MB_ICONINFORMATION);
-                            break; // Nur für das erste Auto eine Route setzen
+                        // Zurück zur normalen Linienbreite nach aktuellem Segment
+                        if (i == controllerVehicle.currentSegmentIndex && vehicle.getId() == g_selected_vehicle_id) {
+                            SelectObject(hdc, oldPen);
+                            DeleteObject(routePen);
+                            routePen = CreatePen(PS_SOLID, routeWidth, routeColor);
+                            SelectObject(hdc, routePen);
                         }
                     }
-                } else {
-                    char message[256];
-                    snprintf(message, sizeof(message), "Kein Knoten gefunden bei (%.0f, %.0f)\nVersuche näher an einen Knoten zu klicken", 
-                            (double)mouseX, (double)mouseY);
-                    MessageBoxA(hwnd, message, "Kein Ziel gefunden", MB_OK | MB_ICONWARNING);
                 }
             }
-            return 0;
+
+            SelectObject(hdc, oldPen);
+            DeleteObject(routePen);
+
+            // Zeichne Zielknoten extra prominent für ausgewähltes Fahrzeug
+            if (controllerVehicle.targetNodeId != -1) {
+                const PathNode* targetNode = pathSystem.getNode(controllerVehicle.targetNodeId);
+                if (targetNode) {
+                    Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
+
+                    // Größerer und auffälligerer Zielknoten für ausgewähltes Fahrzeug
+                    int targetRadius = (vehicle.getId() == g_selected_vehicle_id) ? 30 : 15;
+                    COLORREF targetColor = (vehicle.getId() == g_selected_vehicle_id) ? 
+                                          RGB(255, 50, 255) : routeColor;
+
+                    HBRUSH targetBrush = CreateSolidBrush(targetColor);
+                    HPEN targetPen = CreatePen(PS_SOLID, 3, RGB(255, 255, 255)); // Weißer Rand
+                    HGDIOBJ oldBrush = SelectObject(hdc, targetBrush);
+                    HGDIOBJ oldTargetPen = SelectObject(hdc, targetPen);
+
+                    Ellipse(hdc, 
+                            static_cast<int>(targetPos.x - targetRadius), 
+                            static_cast<int>(targetPos.y - targetRadius),
+                            static_cast<int>(targetPos.x + targetRadius), 
+                            static_cast<int>(targetPos.y + targetRadius));
+
+                    SelectObject(hdc, oldBrush);
+                    SelectObject(hdc, oldTargetPen);
+                    DeleteObject(targetBrush);
+                    DeleteObject(targetPen);
+
+                    // Label für Zielknoten bei ausgewähltem Fahrzeug
+                    if (vehicle.getId() == g_selected_vehicle_id) {
+                        SetBkMode(hdc, TRANSPARENT);
+                        SetTextColor(hdc, RGB(255, 255, 255));
+                        char targetLabel[32];
+                        snprintf(targetLabel, sizeof(targetLabel), "ZIEL: %d", controllerVehicle.targetNodeId);
+                        TextOutA(hdc, static_cast<int>(targetPos.x + 35), static_cast<int>(targetPos.y - 10), 
+                                targetLabel, strlen(targetLabel));
+                    }
+                }
+            }
+            break;
         }
-        case WM_TIMER:
-            // Weniger häufige automatische Updates (alle 200ms statt 100ms)
-            InvalidateRect(hwnd, nullptr, FALSE); // FALSE = kein Hintergrund löschen
-            return 0;
-        case WM_CLOSE:
-            KillTimer(hwnd, 1);
-            DestroyWindow(hwnd);
-            return 0;
+    }
+}
+
+// Draw the vehicle
+void drawVehicleGDI(HDC hdc, const Auto& vehicle) {
+    if (!vehicle.isValid()) return;
+
+    Point center = vehicle.getCenter();
+    Point frontPoint = vehicle.getFrontPoint();
+
+    Point fullscreenCenter = center;
+    Point fullscreenFront = frontPoint;
+
+    float dx = fullscreenFront.x - fullscreenCenter.x;
+    float dy = fullscreenFront.y - fullscreenCenter.y;
+    float length = sqrt(dx * dx + dy * dy);
+
+    if (length > 0) {
+        dx /= length;
+        dy /= length;
+    }
+
+    COLORREF autoColor = RGB(0, 255, 0);      // Green for normal cars
+    COLORREF borderColor = RGB(0, 180, 0);
+
+    if (vehicle.getId() == g_selected_vehicle_id) {
+        autoColor = RGB(255, 0, 255);         // Magenta for selected car
+        borderColor = RGB(200, 0, 200);
+    }
+
+    HBRUSH autoBrush = CreateSolidBrush(autoColor);
+    HGDIOBJ oldBrush = SelectObject(hdc, autoBrush);
+    HPEN autoPen = CreatePen(PS_SOLID, 4, borderColor);
+    HGDIOBJ oldPen = SelectObject(hdc, autoPen);
+
+    int radius = 12;
+    Ellipse(hdc,
+            static_cast<int>(fullscreenCenter.x - radius),
+            static_cast<int>(fullscreenCenter.y - radius),
+            static_cast<int>(fullscreenCenter.x + radius),
+            static_cast<int>(fullscreenCenter.y + radius));
+
+    SelectObject(hdc, oldBrush);
+    DeleteObject(autoBrush);
+
+    HPEN arrowPen = CreatePen(PS_SOLID, 4, RGB(255, 100, 0));
+    SelectObject(hdc, arrowPen);
+
+    float arrowLength = 25.0f;
+    float arrowEndX = fullscreenCenter.x + dx * arrowLength;
+    float arrowEndY = fullscreenCenter.y + dy * arrowLength;
+
+    MoveToEx(hdc, static_cast<int>(fullscreenCenter.x), static_cast<int>(fullscreenCenter.y), nullptr);
+    LineTo(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY));
+
+    float arrowHeadLength = 8.0f;
+    float arrowHeadAngle = 0.5f;
+
+    float leftX = arrowEndX - (dx * cos(arrowHeadAngle) - dy * sin(arrowHeadAngle)) * arrowHeadLength;
+    float leftY = arrowEndY - (dx * sin(arrowHeadAngle) + dy * cos(arrowHeadAngle)) * arrowHeadLength;
+    float rightX = arrowEndX - (dx * cos(-arrowHeadAngle) - dy * sin(-arrowHeadAngle)) * arrowHeadLength;
+    float rightY = arrowEndY - (dx * sin(-arrowHeadAngle) + dy * cos(-arrowHeadAngle)) * arrowHeadLength;
+
+    MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
+    LineTo(hdc, static_cast<int>(leftX), static_cast<int>(leftY));
+    MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
+    LineTo(hdc, static_cast<int>(rightX), static_cast<int>(rightY));
+
+    SelectObject(hdc, oldPen);
+    DeleteObject(autoPen);
+    DeleteObject(arrowPen);
+}
+
+// Paint handler for the test window
+void OnTestWindowPaint(HWND hwnd) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hwnd, &ps);
+
+    // Zeichne Hintergrundbild falls vorhanden
+    RECT rect;
+    GetClientRect(hwnd, &rect);
+    
+    // Verbessertes Double-Buffering
+    HDC memDC = CreateCompatibleDC(hdc);
+    HBITMAP memBitmap = CreateCompatibleBitmap(hdc, FULLSCREEN_WIDTH, FULLSCREEN_HEIGHT);
+    HGDIOBJ oldMemBitmap = SelectObject(memDC, memBitmap);
+    
+    if (g_backgroundBitmap) {
+        HDC bgDC = CreateCompatibleDC(hdc);
+        HGDIOBJ oldBgBitmap = SelectObject(bgDC, g_backgroundBitmap);
+        
+        // Skaliere Hintergrundbild auf Vollbild (1920x1200)
+        StretchBlt(memDC, 0, 0, FULLSCREEN_WIDTH, FULLSCREEN_HEIGHT,
+                   bgDC, 0, 0, 
+                   rect.right, rect.bottom, SRCCOPY);
+        
+        SelectObject(bgDC, oldBgBitmap);
+        DeleteDC(bgDC);
+    } else {
+        // Fallback: Schwarzer Hintergrund
+        HBRUSH blackBrush = CreateSolidBrush(RGB(0, 0, 0));
+        RECT fullRect = {0, 0, FULLSCREEN_WIDTH, FULLSCREEN_HEIGHT};
+        FillRect(memDC, &fullRect, blackBrush);
+        DeleteObject(blackBrush);
+    }
+
+    if (g_path_system) {
+        // Zeichne Knotennetz
+        drawNodeNetworkGDI(memDC, *g_path_system);
+
+        // Verwende persistente Fahrzeuge für stabilere Anzeige
+        std::vector<Auto> current_autos = getPersistentVehicles();
+
+        // Zeichne nur gültige Fahrzeuge
+        for (const auto& vehicle : current_autos) {
+            if (vehicle.isValid()) {
+                drawVehicleRouteGDI(memDC, vehicle, *g_path_system);
+                drawVehicleGDI(memDC, vehicle);
+            }
+        }
+
+        // Zeige ausgewähltes Fahrzeug an
+        if (g_selected_vehicle_id != -1) {
+            // Zeichne Text für ausgewähltes Fahrzeug
+            SetTextColor(memDC, RGB(255, 255, 255));
+            SetBkMode(memDC, TRANSPARENT);
+
+            std::string selectedText = "Ausgewaehltes Fahrzeug: " + std::to_string(g_selected_vehicle_id);
+            TextOutA(memDC, 10, 10, selectedText.c_str(), selectedText.length());
+
+            std::string instructionText = "Klicken Sie auf einen Knoten um ein Ziel zu setzen";
+            TextOutA(memDC, 10, 30, instructionText.c_str(), instructionText.length());
+        } else {
+            SetTextColor(memDC, RGB(255, 255, 255));
+            SetBkMode(memDC, TRANSPARENT);
+
+            std::string instructionText = "Klicken Sie auf ein Fahrzeug um es auszuwaehlen";
+            TextOutA(memDC, 10, 10, instructionText.c_str(), instructionText.length());
+        }
+    }
+    
+    // Kopiere das fertige Bild in einem Rutsch auf den Bildschirm
+    BitBlt(hdc, 0, 0, FULLSCREEN_WIDTH, FULLSCREEN_HEIGHT, memDC, 0, 0, SRCCOPY);
+    
+    // Aufräumen
+    SelectObject(memDC, oldMemBitmap);
+    DeleteObject(memBitmap);
+    DeleteDC(memDC);
+
+    EndPaint(hwnd, &ps);
+}
+
+LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+
+        case WM_PAINT:
+            OnTestWindowPaint(hwnd);
+            return 0;
+
+        case WM_TIMER:
+            // Nur bei Timer-Events neu zeichnen mit weniger Flackern
+            InvalidateRect(hwnd, nullptr, FALSE);  // FALSE = kein Hintergrund löschen
+            return 0;
+
+        case WM_LBUTTONDOWN: {
+            int mouseX = LOWORD(lParam);
+            int mouseY = HIWORD(lParam);
+            Point clickPos(static_cast<float>(mouseX), static_cast<float>(mouseY));
+
+            // Verwende persistente Fahrzeuge für Klick-Erkennung
+            std::vector<Auto> current_autos = getPersistentVehicles();
+
+            if (g_selected_vehicle_id == -1) {
+                // Kein Fahrzeug ausgewählt - versuche ein Fahrzeug zu selektieren
+                for (const auto& vehicle : current_autos) {
+                    Point vehiclePos = vehicle.getCenter();
+                    float distance = clickPos.distanceTo(vehiclePos);
+
+                    if (distance <= 50.0f) { // 50 Pixel Toleranz
+                        g_selected_vehicle_id = vehicle.getId();
+                        std::cout << "Fahrzeug " << g_selected_vehicle_id << " ausgewählt" << std::endl;
+                        InvalidateRect(hwnd, NULL, FALSE); // Weniger Flackern
+                        break;
+                    }
+                }
+            } else {
+                // Fahrzeug ist ausgewählt - versuche Zielknoten zu setzen
+                if (g_path_system && g_vehicle_controller) {
+                    int nearestNodeId = g_path_system->findNearestNode(clickPos, 80.0f);
+                    if (nearestNodeId != -1) {
+                        // Ziel für das ausgewählte Fahrzeug setzen
+                        const_cast<VehicleController*>(g_vehicle_controller)->setVehicleTargetNode(g_selected_vehicle_id, nearestNodeId);
+                        std::cout << "Fahrzeug " << g_selected_vehicle_id << " Ziel gesetzt auf Knoten " << nearestNodeId << std::endl;
+                        
+                        // Aktualisiere Fahrzeug-Befehle für die nächste Iteration
+                        updateVehicleCommands(); 
+
+                        InvalidateRect(hwnd, NULL, FALSE); // Weniger Flackern
+                    } else {
+                        char message[256];
+                        snprintf(message, sizeof(message), "Kein Knoten gefunden bei (%.0f, %.0f)\nVersuche näher an einen Knoten zu klicken",
+                                (double)mouseX, (double)mouseY);
+                        MessageBoxA(hwnd, message, "Kein Ziel gefunden", MB_OK | MB_ICONWARNING);
+                    }
+                }
+            }
+            return 0;
+        }
+
+        case WM_RBUTTONDOWN: {
+            // Rechtsklick: Fahrzeugauswahl aufheben
+            if (g_selected_vehicle_id != -1) {
+                g_selected_vehicle_id = -1;
+                std::cout << "Fahrzeugauswahl aufgehoben" << std::endl;
+                InvalidateRect(hwnd, NULL, TRUE); // Neu zeichnen
+            }
+            return 0;
+        }
+
+        case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE) {
+                PostQuitMessage(0);
+            }
+            return 0;
+
+        default:
+            return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
-    return DefWindowProcA(hwnd, uMsg, wParam, lParam);
 }
 
 void createWindowsAPITestWindow() {
@@ -825,8 +1133,8 @@ void createWindowsAPITestWindow() {
         ShowWindow(hwnd, SW_SHOW); // Vollbild anzeigen
         UpdateWindow(hwnd);
 
-        // Timer für regelmäßige Updates (alle 200ms statt 100ms für weniger Flackern)
-        SetTimer(hwnd, 1, 200, nullptr);
+        // Timer für regelmäßige Updates (alle 100ms für stabilere Darstellung)
+        SetTimer(hwnd, 1, 100, nullptr);
 
         std::cout << "Zweites Auto-Fenster maximiert auf Hauptmonitor erstellt!" << std::endl;
 
@@ -870,6 +1178,14 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
 
         // Convert detected objects to points with fullscreen coordinates
         for (const auto& obj : detected_objects) {
+            // Überspringe ungültige Objekte sofort
+            if (obj.crop_width <= 0 || obj.crop_height <= 0 || 
+                obj.coordinates.x < 0 || obj.coordinates.y < 0) {
+                printf("SKIP: Invalid object data: color=%s, coords=(%.2f, %.2f), crop_size=(%.2f, %.2f)\n", 
+                       obj.color.c_str(), obj.coordinates.x, obj.coordinates.y, obj.crop_width, obj.crop_height);
+                continue;
+            }
+
             printf("Processing object: color=%s, coords=(%.2f, %.2f), crop_size=(%.2f, %.2f)\n", 
                    obj.color.c_str(), obj.coordinates.x, obj.coordinates.y, obj.crop_width, obj.crop_height);
 
@@ -878,10 +1194,11 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
                                     obj.crop_width, obj.crop_height, 
                                     fullscreen_x, fullscreen_y);
 
-            // Überprüfe, ob die transformierten Koordinaten gültig sind
-            if (fullscreen_x >= 0 && fullscreen_x <= FULLSCREEN_WIDTH && 
-                fullscreen_y >= 0 && fullscreen_y <= FULLSCREEN_HEIGHT) {
+            // Erweiterte Gültigkeitsprüfung
+            bool isValid = (fullscreen_x >= 50 && fullscreen_x <= FULLSCREEN_WIDTH - 50 && 
+                           fullscreen_y >= 50 && fullscreen_y <= FULLSCREEN_HEIGHT - 50);
 
+            if (isValid) {
                 // Create point with correct type and color
                 if (obj.color == "Front") {
                     g_points.emplace_back(fullscreen_x, fullscreen_y, PointType::FRONT, obj.color);
@@ -891,7 +1208,7 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
                     printf("Added %s point at (%.2f, %.2f)\n", obj.color.c_str(), fullscreen_x, fullscreen_y);
                 }
             } else {
-                printf("WARNING: Invalid coordinates after transformation: (%.2f, %.2f)\n", fullscreen_x, fullscreen_y);
+                printf("REJECT: Coordinates outside valid range: (%.2f, %.2f)\n", fullscreen_x, fullscreen_y);
             }
         }
 
@@ -904,9 +1221,10 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
     }
 
     // Fenster zur Neuzeichnung veranlassen (falls es existiert)
-    // WENIGER HÄUFIGE UPDATES für weniger Flackern
+    // SOFORTIGE UPDATES für Live-Darstellung
     if (g_test_window_hwnd != nullptr) {
         InvalidateRect(g_test_window_hwnd, nullptr, FALSE); // FALSE = kein Hintergrund löschen
+        UpdateWindow(g_test_window_hwnd); // Sofortiges Update ohne Timer-Wartezeit
     }
 }
 
@@ -914,6 +1232,9 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
 void updateTestWindowVehicles(const std::vector<Auto>& vehicles) {
     std::lock_guard<std::mutex> lock(g_data_mutex);
     g_detected_autos = vehicles;
+    
+    // Aktualisiere persistente Fahrzeuge
+    updatePersistentVehicles(vehicles);
 
     // Fenster zur Neuzeichnung veranlassen
     if (g_test_window_hwnd != nullptr) {
