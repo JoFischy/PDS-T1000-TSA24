@@ -128,7 +128,7 @@ void CoordinateFilter::processDetection(const Point& newPoint, const std::string
         fp.lastUpdate = std::chrono::steady_clock::now();
 
         // Alte Detektionen entfernen (nur letzte X behalten)
-        if (fp.recentDetections.size() > maxRecentDetections) {
+        if (fp.recentDetections.size() > static_cast<size_t>(maxRecentDetections)) {
             fp.recentDetections.erase(fp.recentDetections.begin());
         }
 

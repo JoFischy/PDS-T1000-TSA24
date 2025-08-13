@@ -34,6 +34,7 @@ static std::vector<Auto> g_detected_autos;
 static std::mutex g_data_mutex;
 static HWND g_test_window_hwnd = nullptr;
 static float g_tolerance = 100.0f;
+static HBITMAP g_backgroundBitmap = nullptr;
 
 // Helper-Funktionen für Auto-Erkennung (wie in car_simulation.cpp)
 void detectVehiclesInTestWindow() {
@@ -209,8 +210,25 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
             HGDIOBJ oldBitmap = SelectObject(memDC, memBitmap);
             
-            // Weißer Hintergrund (wie im Raylib-Fenster)
+            // Weißer Hintergrund
             FillRect(memDC, &rect, (HBRUSH)GetStockObject(WHITE_BRUSH));
+            
+            // Zeichne Hintergrundbild falls geladen
+            if (g_backgroundBitmap) {
+                HDC bgDC = CreateCompatibleDC(memDC);
+                HGDIOBJ oldBgBitmap = SelectObject(bgDC, g_backgroundBitmap);
+                
+                BITMAP bmp;
+                GetObject(g_backgroundBitmap, sizeof(BITMAP), &bmp);
+                
+                // Skaliere auf Fenstergröße
+                SetStretchBltMode(memDC, HALFTONE);
+                StretchBlt(memDC, 0, 0, width, height, 
+                          bgDC, 0, 0, bmp.bmWidth, bmp.bmHeight, SRCCOPY);
+                
+                SelectObject(bgDC, oldBgBitmap);
+                DeleteDC(bgDC);
+            }
             
             // Hole aktuelle Daten (Thread-safe)
             std::vector<Point> current_points;
@@ -340,6 +358,26 @@ void createWindowsAPITestWindow() {
         
         // Fenster-Handle global speichern
         g_test_window_hwnd = hwnd;
+        
+        // Lade Hintergrundbild - verwende BMP für Windows API
+        g_backgroundBitmap = (HBITMAP)LoadImageA(nullptr, "assets/factory_layout.bmp", 
+                                                IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+        if (!g_backgroundBitmap) {
+            // Versuche auch andere Pfade
+            g_backgroundBitmap = (HBITMAP)LoadImageA(nullptr, "./factory_layout.bmp", 
+                                                    IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+        }
+        if (!g_backgroundBitmap) {
+            // Versuche relativen Pfad
+            g_backgroundBitmap = (HBITMAP)LoadImageA(nullptr, "../assets/factory_layout.bmp", 
+                                                    IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE);
+        }
+        
+        if (g_backgroundBitmap) {
+            std::cout << "Hintergrundbild erfolgreich geladen für zweites Fenster!" << std::endl;
+        } else {
+            std::cout << "Warnung: Hintergrundbild konnte nicht geladen werden!" << std::endl;
+        }
         
         ShowWindow(hwnd, SW_SHOWMAXIMIZED); // Maximiert starten
         UpdateWindow(hwnd);

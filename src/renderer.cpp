@@ -5,7 +5,7 @@
 #include <cmath> // For M_PI, cosf, sinf
 
 Renderer::Renderer(int width, int height)
-    : screenWidth(width), screenHeight(height) {
+    : screenWidth(width), screenHeight(height), backgroundLoaded(false) {
 
     // Initialize colors
     backgroundColor = WHITE;
@@ -20,10 +20,14 @@ Renderer::Renderer(int width, int height)
 
 void Renderer::initialize() {
     // Don't initialize window - handled by main
+    loadBackground();
 }
 
 void Renderer::cleanup() {
     // Don't close window - handled by main
+    if (backgroundLoaded) {
+        UnloadTexture(backgroundTexture);
+    }
 }
 
 bool Renderer::shouldClose() {
@@ -31,25 +35,8 @@ bool Renderer::shouldClose() {
 }
 
 void Renderer::render(const std::vector<Point>& points, const std::vector<Auto>& detectedAutos, float tolerance) {
-    // Clear background
-    ClearBackground(backgroundColor);
-
-    // Draw detected vehicles first (so they appear behind points)
-    for (const Auto& auto_ : detectedAutos) {
-        drawAuto(auto_);
-    }
-
-    // Draw all points
-    for (size_t i = 0; i < points.size(); i++) {
-        bool isSelected = points[i].isDragging;
-        drawPoint(points[i], static_cast<int>(i), isSelected);
-    }
-
-    // Draw UI
-    drawUI(tolerance);
-    
-    // Draw vehicle information
-    drawVehicleInfo(detectedAutos);
+    // Hauptfenster zeigt nur Hintergrundbild - keine Punkte, Autos oder Text
+    renderBackgroundOnly();
 }
 
 void Renderer::drawPoint(const Point& point, int index, bool isSelected) {
@@ -156,6 +143,74 @@ void Renderer::drawVehicleInfo(const std::vector<Auto>& detectedAutos) {
             DrawText(vehicleText, 10, yOffset, 16, uiColor);
             yOffset += 20;
         }
+    }
+}
+
+void Renderer::renderBackgroundOnly() {
+    // Clear background
+    ClearBackground(backgroundColor);
+    
+    // Draw only background image
+    drawBackground();
+}
+
+void Renderer::renderWithData(const std::vector<Point>& points, const std::vector<Auto>& detectedAutos, float tolerance) {
+    // Clear background
+    ClearBackground(backgroundColor);
+    
+    // Draw background image
+    drawBackground();
+
+    // Draw detected vehicles first (so they appear behind points)
+    for (const Auto& auto_ : detectedAutos) {
+        drawAuto(auto_);
+    }
+
+    // Draw all points
+    for (size_t i = 0; i < points.size(); i++) {
+        bool isSelected = points[i].isDragging;
+        drawPoint(points[i], static_cast<int>(i), isSelected);
+    }
+
+    // Draw UI
+    drawUI(tolerance);
+    
+    // Draw vehicle information
+    drawVehicleInfo(detectedAutos);
+}
+
+void Renderer::loadBackground() {
+    // Try to load the factory layout image
+    const char* imagePath = "assets/factory_layout.png";
+    
+    if (FileExists(imagePath)) {
+        backgroundTexture = LoadTexture(imagePath);
+        backgroundLoaded = true;
+        printf("Factory layout loaded: %dx%d\n", backgroundTexture.width, backgroundTexture.height);
+    } else {
+        printf("Warning: Factory layout image not found at %s\n", imagePath);
+        backgroundLoaded = false;
+    }
+}
+
+void Renderer::drawBackground() {
+    if (backgroundLoaded) {
+        // Scale background to fit screen while maintaining aspect ratio
+        float scaleX = (float)screenWidth / backgroundTexture.width;
+        float scaleY = (float)screenHeight / backgroundTexture.height;
+        float scale = fminf(scaleX, scaleY);
+        
+        int scaledWidth = (int)(backgroundTexture.width * scale);
+        int scaledHeight = (int)(backgroundTexture.height * scale);
+        
+        // Center the image
+        int offsetX = (screenWidth - scaledWidth) / 2;
+        int offsetY = (screenHeight - scaledHeight) / 2;
+        
+        Rectangle sourceRect = { 0, 0, (float)backgroundTexture.width, (float)backgroundTexture.height };
+        Rectangle destRect = { (float)offsetX, (float)offsetY, (float)scaledWidth, (float)scaledHeight };
+        
+        DrawTexturePro(backgroundTexture, sourceRect, destRect, { 0, 0 }, 0.0f, WHITE);
     }
 }
 
