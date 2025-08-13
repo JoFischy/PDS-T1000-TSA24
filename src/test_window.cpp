@@ -777,6 +777,61 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     SelectObject(hdc, oldPen);
     DeleteObject(autoPen);
     DeleteObject(arrowPen);
+
+    // === NEUER ZIELPFEIL: Zeigt zum nächsten Wegpunkt ===
+    if (g_vehicle_controller && g_path_system) {
+        // Finde das entsprechende Vehicle im Controller
+        const auto& vehicles = g_vehicle_controller->getVehicles();
+        for (const auto& vehicle : vehicles) {
+            if (vehicle.getId() == auto_.getId() && vehicle.targetNodeId != -1) {
+                // Hole den nächsten Wegpunkt
+                const PathNode* targetNode = g_path_system->getNode(vehicle.targetNodeId);
+                if (targetNode) {
+                    Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
+                    
+                    // Berechne Vektor zum Ziel
+                    float targetDx = targetPos.x - fullscreenCenter.x;
+                    float targetDy = targetPos.y - fullscreenCenter.y;
+                    float targetLength = sqrt(targetDx * targetDx + targetDy * targetDy);
+                    
+                    if (targetLength > 0) {
+                        targetDx /= targetLength;
+                        targetDy /= targetLength;
+                        
+                        // Zeichne ZIELPFEIL (blau, länger als Richtungspfeil)
+                        HPEN targetPen = CreatePen(PS_SOLID, 3, RGB(0, 150, 255)); // Cyan-Blau
+                        HGDIOBJ oldTargetPen = SelectObject(hdc, targetPen);
+                        
+                        float targetArrowLength = 40.0f; // Länger als Richtungspfeil
+                        float targetEndX = fullscreenCenter.x + targetDx * targetArrowLength;
+                        float targetEndY = fullscreenCenter.y + targetDy * targetArrowLength;
+                        
+                        // Hauptlinie des Zielpfeils
+                        MoveToEx(hdc, static_cast<int>(fullscreenCenter.x), static_cast<int>(fullscreenCenter.y), nullptr);
+                        LineTo(hdc, static_cast<int>(targetEndX), static_cast<int>(targetEndY));
+                        
+                        // Zielpfeil-Spitze (größer)
+                        float targetHeadLength = 12.0f;
+                        float targetHeadAngle = 0.4f;
+                        
+                        float targetLeftX = targetEndX - (targetDx * cos(targetHeadAngle) - targetDy * sin(targetHeadAngle)) * targetHeadLength;
+                        float targetLeftY = targetEndY - (targetDx * sin(targetHeadAngle) + targetDy * cos(targetHeadAngle)) * targetHeadLength;
+                        float targetRightX = targetEndX - (targetDx * cos(-targetHeadAngle) - targetDy * sin(-targetHeadAngle)) * targetHeadLength;
+                        float targetRightY = targetEndY - (targetDx * sin(-targetHeadAngle) + targetDy * cos(-targetHeadAngle)) * targetHeadLength;
+                        
+                        MoveToEx(hdc, static_cast<int>(targetEndX), static_cast<int>(targetEndY), nullptr);
+                        LineTo(hdc, static_cast<int>(targetLeftX), static_cast<int>(targetLeftY));
+                        MoveToEx(hdc, static_cast<int>(targetEndX), static_cast<int>(targetEndY), nullptr);
+                        LineTo(hdc, static_cast<int>(targetRightX), static_cast<int>(targetRightY));
+                        
+                        SelectObject(hdc, oldTargetPen);
+                        DeleteObject(targetPen);
+                    }
+                }
+                break; // Vehicle gefunden, stoppe Suche
+            }
+        }
+    }
 }
 
 // Draw the node network
