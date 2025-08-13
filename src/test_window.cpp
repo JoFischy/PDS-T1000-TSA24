@@ -17,6 +17,9 @@
 #include <windows.h>
 #include <wingdi.h>
 #include <winuser.h>
+#include <commctrl.h>  // Für Trackbar-Controls
+
+#pragma comment(lib, "comctl32.lib")  // Link Trackbar-Library
 
 // Undefs für Konflikte mit Raylib
 #ifdef Rectangle
@@ -35,6 +38,198 @@ static std::mutex g_data_mutex;
 static HWND g_test_window_hwnd = nullptr;
 static float g_tolerance = 100.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
+
+// Kalibrierungsparameter für Koordinaten-Anpassung
+static float g_x_scale = 1.0f;          // X-Skalierung (Standard: 1.0)
+static float g_y_scale = 1.0f;          // Y-Skalierung (Standard: 1.0)
+static float g_x_offset = 0.0f;         // X-Verschiebung in Pixeln
+static float g_y_offset = 0.0f;         // Y-Verschiebung in Pixeln
+static float g_x_curve = 0.0f;          // X-Kurvenkorrektur für Mitte/Rand-Problem
+static float g_y_curve = 0.0f;          // Y-Kurvenkorrektur für Oben/Unten-Problem
+
+// Trackbar-IDs für Kalibrierung
+#define ID_TRACKBAR_X_SCALE    1001
+#define ID_TRACKBAR_Y_SCALE    1002
+#define ID_TRACKBAR_X_OFFSET   1003
+#define ID_TRACKBAR_Y_OFFSET   1004
+#define ID_TRACKBAR_X_CURVE    1005
+#define ID_TRACKBAR_Y_CURVE    1006
+
+// Trackbar-Handles (nicht verwendet, aber für zukünftige Erweiterungen definiert)
+// static HWND g_trackbar_x_scale = nullptr;
+// static HWND g_trackbar_y_scale = nullptr;
+// static HWND g_trackbar_x_offset = nullptr;
+// static HWND g_trackbar_y_offset = nullptr;
+// static HWND g_trackbar_x_curve = nullptr;
+// static HWND g_trackbar_y_curve = nullptr;
+
+// Kalibrierungs-Fenster
+static HWND g_calibration_window = nullptr;
+
+// Trackbar-Wert zu Float konvertieren
+float trackbarToFloat(int trackbarValue, float minVal, float maxVal) {
+    return minVal + (trackbarValue / 1000.0f) * (maxVal - minVal);
+}
+
+// Float-Wert zu Trackbar konvertieren
+int floatToTrackbar(float value, float minVal, float maxVal) {
+    return (int)((value - minVal) / (maxVal - minVal) * 1000.0f);
+}
+
+// Kalibrierungs-Fenster Message Handler
+LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+        case WM_CREATE: {
+            // Common Controls initialisieren
+            InitCommonControls();
+            
+            int y = 20;
+            int labelWidth = 100;
+            int trackbarWidth = 200;
+            
+            // X-Scale Trackbar (0.5 - 2.0)
+            CreateWindowA("STATIC", "X-Scale:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND xScaleTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                           labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_X_SCALE, nullptr, nullptr);
+            SendMessage(xScaleTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(xScaleTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_x_scale, 0.5f, 2.0f));
+            y += 40;
+            
+            // Y-Scale Trackbar (0.5 - 2.0)
+            CreateWindowA("STATIC", "Y-Scale:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND yScaleTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                           labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_Y_SCALE, nullptr, nullptr);
+            SendMessage(yScaleTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(yScaleTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_y_scale, 0.5f, 2.0f));
+            y += 40;
+            
+            // X-Offset Trackbar (-200 - +200)
+            CreateWindowA("STATIC", "X-Offset:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND xOffsetTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                             labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_X_OFFSET, nullptr, nullptr);
+            SendMessage(xOffsetTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(xOffsetTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_x_offset, -200.0f, 200.0f));
+            y += 40;
+            
+            // Y-Offset Trackbar (-200 - +200)
+            CreateWindowA("STATIC", "Y-Offset:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND yOffsetTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                             labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_Y_OFFSET, nullptr, nullptr);
+            SendMessage(yOffsetTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(yOffsetTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_y_offset, -200.0f, 200.0f));
+            y += 40;
+            
+            // X-Curve Trackbar (-0.5 - +0.5)
+            CreateWindowA("STATIC", "X-Curve:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND xCurveTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                            labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_X_CURVE, nullptr, nullptr);
+            SendMessage(xCurveTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(xCurveTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_x_curve, -0.5f, 0.5f));
+            y += 40;
+            
+            // Y-Curve Trackbar (-0.5 - +0.5)
+            CreateWindowA("STATIC", "Y-Curve:", WS_VISIBLE | WS_CHILD, 10, y, labelWidth, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND yCurveTrack = CreateWindowA(TRACKBAR_CLASSA, "", WS_VISIBLE | WS_CHILD | TBS_HORZ,
+                                            labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_Y_CURVE, nullptr, nullptr);
+            SendMessage(yCurveTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
+            SendMessage(yCurveTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_y_curve, -0.5f, 0.5f));
+            
+            return 0;
+        }
+        case WM_HSCROLL: {
+            if (LOWORD(wParam) == TB_THUMBTRACK || LOWORD(wParam) == TB_ENDTRACK) {
+                int trackbarId = GetDlgCtrlID((HWND)lParam);
+                int position = SendMessage((HWND)lParam, TBM_GETPOS, 0, 0);
+                
+                switch (trackbarId) {
+                    case ID_TRACKBAR_X_SCALE:
+                        g_x_scale = trackbarToFloat(position, 0.5f, 2.0f);
+                        break;
+                    case ID_TRACKBAR_Y_SCALE:
+                        g_y_scale = trackbarToFloat(position, 0.5f, 2.0f);
+                        break;
+                    case ID_TRACKBAR_X_OFFSET:
+                        g_x_offset = trackbarToFloat(position, -200.0f, 200.0f);
+                        break;
+                    case ID_TRACKBAR_Y_OFFSET:
+                        g_y_offset = trackbarToFloat(position, -200.0f, 200.0f);
+                        break;
+                    case ID_TRACKBAR_X_CURVE:
+                        g_x_curve = trackbarToFloat(position, -0.5f, 0.5f);
+                        break;
+                    case ID_TRACKBAR_Y_CURVE:
+                        g_y_curve = trackbarToFloat(position, -0.5f, 0.5f);
+                        break;
+                }
+                
+                // Hauptfenster neu zeichnen
+                if (g_test_window_hwnd) {
+                    InvalidateRect(g_test_window_hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        }
+        case WM_CLOSE:
+            DestroyWindow(hwnd);
+            g_calibration_window = nullptr;
+            return 0;
+        case WM_DESTROY:
+            return 0;
+    }
+    return DefWindowProcA(hwnd, uMsg, wParam, lParam);
+}
+
+// Kalibrierungs-Fenster erstellen
+void createCalibrationWindow() {
+    if (g_calibration_window != nullptr) return; // Schon offen
+    
+    HINSTANCE hInstance = GetModuleHandle(nullptr);
+    
+    // Fensterklasse registrieren
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc = CalibrationWindowProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = "CalibrationWindow";
+    wc.hbrBackground = (HBRUSH)GetStockObject(LTGRAY_BRUSH);
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    
+    RegisterClassA(&wc);
+    
+    // Verschiebares Fenster erstellen
+    g_calibration_window = CreateWindowExA(
+        0,
+        "CalibrationWindow",
+        "Koordinaten-Kalibrierung",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,  // WS_VISIBLE hinzugefügt
+        100, 100, 350, 300,
+        nullptr, nullptr, hInstance, nullptr
+    );
+    
+    if (g_calibration_window) {
+        ShowWindow(g_calibration_window, SW_SHOW);
+        UpdateWindow(g_calibration_window);
+    }
+}
+
+// Kalibrierte Koordinaten-Transformation
+void transformCoordinates(float norm_x, float norm_y, int windowWidth, int windowHeight, float& window_x, float& window_y) {
+    // Basis-Skalierung
+    window_x = norm_x * windowWidth * g_x_scale;
+    window_y = norm_y * windowHeight * g_y_scale;
+    
+    // Kurvenkorrektur für Mitte/Rand und Oben/Unten Probleme
+    // X-Korrektur: Mitte ist gut, Ränder zu weit innen -> quadratische Korrektur
+    float x_center_offset = (norm_x - 0.5f); // -0.5 bis +0.5
+    window_x += x_center_offset * x_center_offset * g_x_curve * windowWidth;
+    
+    // Y-Korrektur: Oben ist gut, unten zu hoch -> lineare/quadratische Korrektur  
+    float y_offset_factor = norm_y; // 0.0 bis 1.0
+    window_y += y_offset_factor * g_y_curve * windowHeight;
+    
+    // Finale Verschiebung
+    window_x += g_x_offset;
+    window_y += g_y_offset;
+}
 
 // Helper-Funktionen für Auto-Erkennung (wie in car_simulation.cpp)
 void detectVehiclesInTestWindow() {
@@ -387,6 +582,10 @@ void createWindowsAPITestWindow() {
         
         std::cout << "Zweites Auto-Fenster maximiert auf Hauptmonitor erstellt!" << std::endl;
         
+        // Automatisch Kalibrierungs-Fenster öffnen
+        createCalibrationWindow();
+        std::cout << "Kalibrierungs-Fenster automatisch geöffnet!" << std::endl;
+        
         // Message Loop
         MSG msg = {};
         while (GetMessage(&msg, nullptr, 0, 0)) {
@@ -414,7 +613,7 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
             int windowHeight = windowRect.bottom - windowRect.top;
             
             for (const auto& obj : detected_objects) {
-                // Normalisiere Koordinaten (0.0 bis 1.0) und skaliere auf Fenstergröße
+                // Normalisiere Koordinaten (0.0 bis 1.0)
                 float norm_x = 0.0f;
                 float norm_y = 0.0f;
                 
@@ -423,9 +622,9 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
                     norm_y = obj.coordinates.y / obj.crop_height;
                 }
                 
-                // Skaliere auf gesamte Fensterfläche
-                float window_x = norm_x * windowWidth;
-                float window_y = norm_y * windowHeight;
+                // Verwende kalibrierte Transformation
+                float window_x, window_y;
+                transformCoordinates(norm_x, norm_y, windowWidth, windowHeight, window_x, window_y);
                 
                 if (obj.color == "Front") {
                     g_points.emplace_back(window_x, window_y, PointType::FRONT, obj.color);
