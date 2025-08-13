@@ -136,9 +136,9 @@ void CarSimulation::renderCars() {
 }
 
 void CarSimulation::renderUI() {
-    // UI is rendered by the renderer
+    // Hauptfenster zeigt nur Hintergrund, keine Autos/Punkte
     if (renderer) {
-        renderer->render(points, detectedAutos, tolerance);
+        renderer->renderBackgroundOnly();
     }
 }
 

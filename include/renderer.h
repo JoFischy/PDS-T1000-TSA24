@@ -13,6 +13,10 @@ class Renderer {
 private:
     int screenWidth;
     int screenHeight;
+    
+    // Background
+    Texture2D backgroundTexture;
+    bool backgroundLoaded;
 
     // Colors
     Color backgroundColor;
@@ -29,6 +33,8 @@ public:
     void cleanup();
     bool shouldClose();
     void render(const std::vector<Point>& points, const std::vector<Auto>& detectedAutos, float tolerance);
+    void renderBackgroundOnly();
+    void renderWithData(const std::vector<Point>& points, const std::vector<Auto>& detectedAutos, float tolerance);
 
 private:
     void drawPoint(const Point& point, int index, bool isSelected);
@@ -36,6 +42,8 @@ private:
     void drawUI(float tolerance);
     void drawToleranceVisualization(const std::vector<Point>& points, float tolerance);
     void drawVehicleInfo(const std::vector<Auto>& detectedAutos);
+    void drawBackground();
+    void loadBackground();
     Color getIdentificationColor(int index);
 };
 
