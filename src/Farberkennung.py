@@ -47,20 +47,20 @@ class SimpleCoordinateDetector:
 
         # Farbdefinitionen (HSV) - FINAL OPTIMIERT
         self.color_definitions = {
-            'Front': [114, 255, 150],
-            'Heck1': [72, 255, 60],
-            'Heck2': [178, 190, 210],
-            'Heck3': [7, 240, 140],
-            'Heck4': [11, 160, 255]
+            'Front': [106, 255, 240],
+            'Heck1': [40, 255, 165],
+            'Heck2': [1, 255, 220],
+            'Heck3': [10, 255, 255],
+            'Heck4': [122, 185, 150]
         }
 
         # HSV-Toleranzen für jeden Filter - FINAL OPTIMIERT
         self.hsv_tolerances = {
-            'Front': {'h': 34, 's': 48, 'v': 255},
-            'Heck1': {'h': 9, 's': 0, 'v': 255},
-            'Heck2': {'h': 8, 's': 103, 'v': 237},
-            'Heck3': {'h': 32, 's': 160, 'v': 80},
-            'Heck4': {'h': 6, 's': 117, 'v': 46}
+            'Front': {'h': 15, 's': 0, 'v': 255},
+            'Heck1': {'h': 6, 's': 0, 'v': 134},
+            'Heck2': {'h': 5, 's': 187, 'v': 151},
+            'Heck3': {'h': 5, 's': 29, 'v': 129},
+            'Heck4': {'h': 75, 's': 61, 'v': 61}
         }
 
     def detect_monitor3_position(self):
