@@ -9,10 +9,10 @@
 #include <cmath>
 #include <iostream>
 
-#define DEFAULT_CAR_POINT_DISTANCE 12.0f
-#define DISTANCE_BUFFER 4.0f
+#define DEFAULT_CAR_POINT_DISTANCE 25.0f
+#define DISTANCE_BUFFER 8.0f
 
-CarSimulation::CarSimulation() : tolerance(100.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE),
+CarSimulation::CarSimulation() : tolerance(250.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE),
                                  distance_buffer(DISTANCE_BUFFER), segmentManager(nullptr), vehicleController(nullptr),
                                  pathSystemInitialized(false), selectedVehicle(-1) {
     renderer = nullptr;
@@ -44,37 +44,38 @@ void CarSimulation::initialize() {
 }
 
 void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>& detected_objects, const FieldTransform& field_transform) {
-    // Convert detected objects to Points with window coordinates
+    // ULTRA-SCHNELLE VERARBEITUNG: Minimale Zwischenschritte
     std::vector<Point> rawPoints;
+    rawPoints.reserve(detected_objects.size()); // Verhindere Reallocations
+    
     std::vector<std::string> colors;
+    colors.reserve(detected_objects.size());
 
-    for (size_t i = 0; i < detected_objects.size(); i++) {
-        const auto& obj = detected_objects[i];
+    // Optimierte Schleife mit KALIBRIERTER Koordinaten-Transformation
+    for (const auto& obj : detected_objects) {
+        // Verwende kalibrierte Transformation aus test_window.cpp
+        if (obj.crop_width > 0 && obj.crop_height > 0) {
+            float window_x, window_y;
+            getCalibratedTransform(obj.coordinates.x, obj.coordinates.y, 
+                                 obj.crop_width, obj.crop_height, 
+                                 window_x, window_y);
 
-        // Convert to window pixel coordinates for fullscreen display
-        float window_x, window_y;
-        cameraToWindow(obj, field_transform, window_x, window_y);
-
-        if (obj.color == "Front") {
-            rawPoints.emplace_back(window_x, window_y, PointType::FRONT, obj.color);
-            colors.push_back(obj.color);
-        } else if (obj.color.find("Heck") == 0) {
-            rawPoints.emplace_back(window_x, window_y, PointType::IDENTIFICATION, obj.color);
-            colors.push_back(obj.color);
+            if (obj.color == "Front") {
+                rawPoints.emplace_back(window_x, window_y, PointType::FRONT, obj.color);
+                colors.push_back(obj.color);
+            } else if (obj.color.find("Heck") == 0) {
+                rawPoints.emplace_back(window_x, window_y, PointType::IDENTIFICATION, obj.color);
+                colors.push_back(obj.color);
+            }
         }
     }
 
-    // SCHNELLER FILTER: Direkter Durchgang für minimale Verzögerung
-    if (fastFilter) {
-        points = fastFilter->filterAndSmooth(rawPoints, colors);
-    } else {
-        // Fallback: Direkte Verwendung ohne Filter
-        points = rawPoints;
-    }
-
-    // Detect vehicles from filtered points only
-    detectVehicles();
+    // DIREKTER DURCHGANG - Kein Filter für maximale Geschwindigkeit
+    points = std::move(rawPoints); // Move semantics für Performance
     
+    // Sofortige Fahrzeugerkennung
+    detectVehicles();
+
     // Update test window with detected objects and vehicles
     std::vector<DetectedObject> detectedObjForWindow;
     for (const auto& point : points) {
@@ -85,7 +86,7 @@ void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>&
         detectedObjForWindow.push_back(obj);
     }
     updateTestWindowCoordinates(detectedObjForWindow);
-    
+
     // Update vehicle commands in JSON (extern function from test_window.cpp)
     extern void updateVehicleCommands();
     if (!detectedAutos.empty()) {
@@ -138,7 +139,7 @@ void CarSimulation::detectVehicles() {
             frontPointUsed[bestFrontVectorIdx] = true;  // Mark this front point as used
         }
     }
-    
+
     // Update test window with detected vehicles
     updateTestWindowVehicles(detectedAutos);
 }
@@ -219,7 +220,7 @@ void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransfo
     // Map to entire window area (1920x1200 fullscreen)
     window_x = norm_x * transform.field_width;
     window_y = norm_y * transform.field_height;
-    
+
     // Debug-Ausgabe für transformierte Koordinaten
     std::cout << "cameraToWindow Output: norm(" << norm_x << ", " << norm_y 
               << ") -> window(" << window_x << ", " << window_y << ")" << std::endl;
@@ -370,44 +371,37 @@ void CarSimulation::createFactoryPathSystem() {
 void CarSimulation::syncDetectedVehiclesWithPathSystem() {
     if (!pathSystemInitialized || !vehicleController) return;
 
-    // Erstelle eine Map der aktuell erkannten Fahrzeuge
-    std::map<int, Point> currentDetectedVehicles;
-    
+    // ULTRA-SCHNELLE SYNCHRONISATION - Minimale Zwischenschritte
     for (const auto& detectedAuto : detectedAutos) {
         if (!detectedAuto.isValid()) continue;
 
         Point currentCenter = detectedAuto.getCenter();
         
-        // Validiere Koordinaten
+        // Schnelle Koordinaten-Validierung
         if (currentCenter.x <= 0 || currentCenter.y <= 0 || 
             currentCenter.x >= 1920 || currentCenter.y >= 1200) {
             continue;
         }
 
         int vehicleId = detectedAuto.getId();
-        currentDetectedVehicles[vehicleId] = currentCenter;
-
-        // Map to path system vehicle
+        
+        // Direkte Fahrzeug-Aktualisierung ohne Map-Zwischenspeicherung
         Auto* pathVehicle = vehicleController->getVehicle(vehicleId);
         if (!pathVehicle) {
-            // Erstelle neues Fahrzeug im Path System
-            Point pathSystemPos = transformToPathSystemCoordinates(currentCenter, FieldTransform{});
-            vehicleId = vehicleController->addVehicle(pathSystemPos);
+            // Sofortige Fahrzeug-Erstellung
+            vehicleId = vehicleController->addVehicle(currentCenter); // Direkte Koordinaten
             pathVehicle = vehicleController->getVehicle(vehicleId);
         }
 
         if (pathVehicle) {
-            Point pathSystemPos = transformToPathSystemCoordinates(currentCenter, FieldTransform{});
-            
-            // Direkte Aktualisierung ohne zu viel Filterung
-            vehicleController->updateVehicleFromRealCoordinates(vehicleId, pathSystemPos, detectedAuto.getDirection());
-            
-            // Automatisch nächsten Knoten finden wenn Fahrzeug keinen hat
+            // SOFORTIGE Position-Update ohne Transform-Overhead
+            vehicleController->updateVehicleFromRealCoordinates(vehicleId, currentCenter, detectedAuto.getDirection());
+
+            // Schnelle Node-Assignment falls nötig
             if (pathVehicle->currentNodeId == -1) {
-                int nearestNode = pathSystem.findNearestNode(pathSystemPos, 150.0f);
+                int nearestNode = pathSystem.findNearestNode(currentCenter, 200.0f);
                 if (nearestNode != -1) {
                     pathVehicle->currentNodeId = nearestNode;
-                    std::cout << "Vehicle " << vehicleId << " auto-assigned to nearest node " << nearestNode << std::endl;
                 }
             }
         }

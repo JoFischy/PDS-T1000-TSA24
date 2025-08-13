@@ -1,4 +1,3 @@
-
 #pragma once
 #include "auto.h"
 #include "path_system.h"
@@ -14,10 +13,10 @@ struct VehicleIntention {
         TURN_RIGHT,
         UNKNOWN
     };
-    
+
     Type type;
     Direction targetDirection;
-    
+
     VehicleIntention() : type(UNKNOWN), targetDirection(Direction::NORTH) {}
     VehicleIntention(Type t, Direction dir) : type(t), targetDirection(dir) {}
 };
@@ -48,8 +47,7 @@ public:
     bool isVehicleMoving(int vehicleId) const;
     bool hasVehicleArrived(int vehicleId) const;
     std::vector<int> getVehiclesAtPosition(const Point& position, float radius = 20.0f) const;
-    void coordinateVehicleMovements();
-    
+
     // Advanced conflict detection and resolution
     struct VehicleConflict {
         int vehicleId1;
@@ -58,19 +56,28 @@ public:
         float estimatedConflictTime;
         bool canNegotiate;
     };
-    
+
     std::vector<VehicleConflict> detectUpcomingConflicts() const;
     bool shouldVehicleWaitForConflictResolution(int vehicleId, const std::vector<VehicleConflict>& conflicts) const;
     bool resolveConflictThroughNegotiation(const VehicleConflict& conflict);
     void preventDeadlockThroughCoordination();
 
-    // Path management
+    // Path planning
     bool planPath(int vehicleId, int targetNodeId);
-    bool replanPathIfBlocked(int vehicleId);
     void clearPath(int vehicleId);
     bool isPathBlocked(int vehicleId) const;
     bool findAlternativePath(int vehicleId);
-    void handleBlockedVehicle(Auto& vehicle);
+
+    // Dynamic pathfinding
+    bool planDynamicPath(int vehicleId, int targetNodeId);
+    void updateVehiclePaths();
+    std::vector<int> calculateIntermediatePath(int vehicleId, const Point& currentPos, int targetNodeId);
+    bool needsPathRecalculation(int vehicleId);
+
+    // Vehicle coordination
+    void coordinateVehicleMovements();
+    int findCommonJunctionInPaths(const Auto& vehicle1, const Auto& vehicle2) const;
+    float estimateTimeToJunction(const Auto& vehicle, int junctionId) const;
 
     // Real coordinate integration
     void updateVehicleFromRealCoordinates(int vehicleId, const Point& realPosition, float realDirection);
@@ -82,12 +89,11 @@ public:
     size_t getVehicleCount() const { return vehicles.size(); }
     const PathSystem* getPathSystem() const { return pathSystem; }
 
-    // Helper methods for conflict detection
-    int findCommonJunctionInPaths(const Auto& vehicle1, const Auto& vehicle2) const;
-    float estimateTimeToJunction(const Auto& vehicle, int junctionId) const;
-
 private:
     void updateVehicleMovement(Auto& vehicle, float deltaTime);
+    void updateVehicleMovements(float deltaTime);
+    void handleBlockedVehicle(Auto& vehicle);
+    bool replanPathIfBlocked(int vehicleId);
     void moveVehicleAlongPath(Auto& vehicle, float deltaTime);
     bool checkCollisionRisk(const Auto& vehicle, int segmentId);
     Point interpolatePosition(const Point& start, const Point& end, float t) const;
@@ -115,7 +121,7 @@ private:
     bool tryEvasionRoute(int vehicleId, int tJunctionId);
     bool hasMinimumDistanceToOtherVehicles(const Auto& vehicle, float minDistance);
     bool canMoveWithoutViolatingDistance(const Auto& vehicle, const Point& targetPosition, float minDistance);
-    
+
     // Junction-specific helper methods
     bool hasNearbyVehiclesAtSameJunction(const Auto& vehicle);
     int findAssociatedTJunction(int nodeId);

@@ -20,4 +20,7 @@ void updateTestWindowVehicles(const std::vector<Auto>& vehicles);
 // Setze PathSystem und VehicleController Referenzen für Anzeige
 void setTestWindowPathSystem(const PathSystem* pathSystem, const VehicleController* vehicleController);
 
+// Kalibrierte Koordinaten-Transformation (öffentlich verfügbar)
+void getCalibratedTransform(float crop_x, float crop_y, float crop_width, float crop_height, float& fullscreen_x, float& fullscreen_y);
+
 #endif

@@ -52,7 +52,7 @@ public:
     std::vector<Point> getPathPoints(const std::vector<int>& segmentIds) const;
     
     // Utilities
-    int findNearestNode(const Point& position, float maxDistance = 50.0f) const;
+    int findNearestNode(const Point& position, float maxDistance = 200.0f) const;
     std::vector<int> getConnectedNodes(int nodeId) const;
     float getSegmentLength(int segmentId) const;
     

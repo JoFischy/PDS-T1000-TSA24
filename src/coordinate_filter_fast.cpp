@@ -23,31 +23,24 @@ public:
     std::vector<Point> filterAndSmooth(const std::vector<Point>& newDetections, 
                                       const std::vector<std::string>& colors) {
         std::vector<Point> result;
+        result.reserve(newDetections.size()); // Performance-Optimierung
         
-        // DIREKTER DURCHGANG - keine komplexe Filterung
+        // ABSOLUT DIREKTER DURCHGANG - KEINE VALIDIERUNG für maximale Geschwindigkeit
         for (size_t i = 0; i < newDetections.size() && i < colors.size(); i++) {
             Point fastPoint = newDetections[i];
             
-            // Nur grundlegende Validierung
-            if (isValidCoordinate(fastPoint)) {
-                // Setze Punkttyp basierend auf Farbe
-                if (colors[i].find("Front") == 0) {
-                    fastPoint.type = PointType::FRONT;
-                } else if (colors[i].find("Heck") == 0) {
-                    fastPoint.type = PointType::IDENTIFICATION;
-                }
-                
-                fastPoint.color = colors[i];
-                result.push_back(fastPoint);
+            // Setze Punkttyp basierend auf Farbe (ohne Validierung)
+            if (colors[i].find("Front") == 0) {
+                fastPoint.type = PointType::FRONT;
+            } else if (colors[i].find("Heck") == 0) {
+                fastPoint.type = PointType::IDENTIFICATION;
             }
+            
+            fastPoint.color = colors[i];
+            result.push_back(std::move(fastPoint)); // Move semantics
         }
         
-        // Nur einfache Duplikatsprüfung für Heck-Punkte
-        result = removeDuplicateHeckPoints(result);
-        
-        // Limitiere Front-Punkte auf maximal 4
-        result = limitFrontPoints(result, 4);
-        
+        // Entferne alle Nachbearbeitungsschritte für maximale Geschwindigkeit
         return result;
     }
 

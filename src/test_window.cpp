@@ -39,7 +39,7 @@ static std::vector<Point> g_points;
 static std::vector<Auto> g_detected_autos;
 static std::mutex g_data_mutex;
 static HWND g_test_window_hwnd = nullptr;
-static float g_tolerance = 150.0f;
+static float g_tolerance = 250.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
 
 // Persistente Fahrzeuge (bleiben auch bei kurzen Erkennungsaussetzern)
@@ -168,6 +168,14 @@ LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
                                             labelWidth + 10, y, trackbarWidth, 30, hwnd, (HMENU)ID_TRACKBAR_Y_CURVE, nullptr, nullptr);
             SendMessage(yCurveTrack, TBM_SETRANGE, TRUE, MAKELONG(0, 1000));
             SendMessage(yCurveTrack, TBM_SETPOS, TRUE, floatToTrackbar(g_y_curve, -0.5f, 0.5f));
+            y += 50;
+
+            // Aktuelle Werte anzeigen
+            CreateWindowA("STATIC", "--- Aktuelle Werte ---", WS_VISIBLE | WS_CHILD, 10, y, 200, 20, hwnd, nullptr, nullptr, nullptr);
+            y += 30;
+            CreateWindowA("STATIC", "X-Scale: 1.0, Y-Scale: 1.0", WS_VISIBLE | WS_CHILD, 10, y, 300, 20, hwnd, (HMENU)9001, nullptr, nullptr);
+            y += 20;
+            CreateWindowA("STATIC", "X-Offset: 0, Y-Offset: 0", WS_VISIBLE | WS_CHILD, 10, y, 300, 20, hwnd, (HMENU)9002, nullptr, nullptr);
 
             return 0;
         }
@@ -179,21 +187,27 @@ LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
                 switch (trackbarId) {
                     case ID_TRACKBAR_X_SCALE:
                         g_x_scale = trackbarToFloat(position, 0.5f, 2.0f);
+                        printf("X-Scale geändert auf: %.3f\n", g_x_scale);
                         break;
                     case ID_TRACKBAR_Y_SCALE:
                         g_y_scale = trackbarToFloat(position, 0.5f, 2.0f);
+                        printf("Y-Scale geändert auf: %.3f\n", g_y_scale);
                         break;
                     case ID_TRACKBAR_X_OFFSET:
                         g_x_offset = trackbarToFloat(position, -200.0f, 200.0f);
+                        printf("X-Offset geändert auf: %.1f\n", g_x_offset);
                         break;
                     case ID_TRACKBAR_Y_OFFSET:
                         g_y_offset = trackbarToFloat(position, -200.0f, 200.0f);
+                        printf("Y-Offset geändert auf: %.1f\n", g_y_offset);
                         break;
                     case ID_TRACKBAR_X_CURVE:
                         g_x_curve = trackbarToFloat(position, -0.5f, 0.5f);
+                        printf("X-Curve geändert auf: %.3f\n", g_x_curve);
                         break;
                     case ID_TRACKBAR_Y_CURVE:
                         g_y_curve = trackbarToFloat(position, -0.5f, 0.5f);
+                        printf("Y-Curve geändert auf: %.3f\n", g_y_curve);
                         break;
                 }
 
@@ -201,6 +215,13 @@ LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
                 if (g_test_window_hwnd) {
                     InvalidateRect(g_test_window_hwnd, nullptr, FALSE);
                 }
+
+                // Kalibrierungs-Werte-Anzeige aktualisieren
+                char buffer1[100], buffer2[100];
+                sprintf(buffer1, "X-Scale: %.2f, Y-Scale: %.2f", g_x_scale, g_y_scale);
+                sprintf(buffer2, "X-Offset: %.0f, Y-Offset: %.0f", g_x_offset, g_y_offset);
+                SetWindowTextA(GetDlgItem(hwnd, 9001), buffer1);
+                SetWindowTextA(GetDlgItem(hwnd, 9002), buffer2);
             }
             return 0;
         }
@@ -215,6 +236,45 @@ LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 }
 
 // Kalibrierungs-Fenster erstellen
+// Monitor-Enum-Struktur für Monitor-3-Erkennung
+struct MonitorInfo {
+    int count = 0;
+    RECT monitor3Rect = {0, 0, 0, 0};
+    bool found = false;
+};
+
+// Callback-Funktion für Monitor-Enumeration
+BOOL CALLBACK MonitorEnumProc(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARAM dwData) {
+    MonitorInfo* info = reinterpret_cast<MonitorInfo*>(dwData);
+    info->count++;
+    
+    // Monitor 3 ist der dritte Monitor (Index 2, aber count ist bereits incrementiert)
+    if (info->count == 3) {
+        info->monitor3Rect = *lprcMonitor;
+        info->found = true;
+        return FALSE; // Stoppe Enumeration
+    }
+    return TRUE; // Weiter mit nächstem Monitor
+}
+
+// Funktion zum Ermitteln der Monitor-3-Position
+RECT getMonitor3Position() {
+    MonitorInfo info;
+    EnumDisplayMonitors(NULL, NULL, MonitorEnumProc, reinterpret_cast<LPARAM>(&info));
+    
+    if (info.found) {
+        std::cout << "Monitor 3 gefunden: " << info.monitor3Rect.left << ", " 
+                  << info.monitor3Rect.top << " - " << info.monitor3Rect.right 
+                  << ", " << info.monitor3Rect.bottom << std::endl;
+        return info.monitor3Rect;
+    } else {
+        std::cout << "Monitor 3 nicht gefunden, verwende Standard-Position" << std::endl;
+        // Fallback: Standard-Position
+        RECT fallback = {100, 100, 450, 400};
+        return fallback;
+    }
+}
+
 void createCalibrationWindow() {
     if (g_calibration_window != nullptr) return; // Schon offen
 
@@ -230,19 +290,35 @@ void createCalibrationWindow() {
 
     RegisterClassA(&wc);
 
-    // Verschiebles Fenster erstellen
+    // Monitor 3 Position ermitteln
+    RECT monitor3Rect = getMonitor3Position();
+    
+    // Fenster auf Monitor 3 positionieren (obere linke Ecke)
+    int windowWidth = 350;
+    int windowHeight = 380;  // Größer für die zusätzlichen Werte
+    int posX = monitor3Rect.left + 10; // 10px vom linken Rand
+    int posY = monitor3Rect.top + 10;  // 10px vom oberen Rand
+
+    // Kalibrierungs-Fenster ÜBER dem Vollbild erstellen (TOPMOST)
     g_calibration_window = CreateWindowExA(
-        0,
+        WS_EX_TOPMOST,  // TOPMOST - bleibt IMMER im Vordergrund
         "CalibrationWindow",
-        "Koordinaten-Kalibrierung",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE,  // WS_VISIBLE hinzugefügt
-        100, 100, 350, 300,
+        "Koordinaten-Kalibrierung (verschiebbar)",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE | WS_THICKFRAME,
+        posX, posY, windowWidth, windowHeight,
         nullptr, nullptr, hInstance, nullptr
     );
 
     if (g_calibration_window) {
+        // Stelle sicher, dass das Fenster immer oben bleibt
+        SetWindowPos(g_calibration_window, HWND_TOPMOST, 0, 0, 0, 0, 
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         ShowWindow(g_calibration_window, SW_SHOW);
         UpdateWindow(g_calibration_window);
+        std::cout << "Kalibrierungs-Fenster TOPMOST erstellt - immer im Vordergrund!" << std::endl;
+        std::cout << "Position: " << posX << ", " << posY << " - Sie können es frei verschieben!" << std::endl;
+    } else {
+        std::cout << "Fehler beim Erstellen des Kalibrierungs-Fensters!" << std::endl;
     }
 }
 
@@ -480,7 +556,7 @@ void updatePersistentVehicles(const std::vector<Auto>& newDetections) {
         for (auto& persistent : g_persistent_vehicles) {
             // Fahrzeug gefunden (gleiche ID oder sehr nahe Position)
             if (persistent.vehicle.getId() == newVehicle.getId() || 
-                persistent.vehicle.getCenter().distanceTo(newVehicle.getCenter()) < 100.0f) {
+                persistent.vehicle.getCenter().distanceTo(newVehicle.getCenter()) < 200.0f) {
                 
                 // Sanfte Position Update
                 Point oldPos = persistent.vehicle.getCenter();
@@ -1165,6 +1241,11 @@ void setTestWindowPathSystem(const PathSystem* pathSystem, const VehicleControll
 }
 
 // Update-Funktion für Live-Koordinaten und Auto-Erkennung
+// Öffentliche Funktion für kalibrierte Koordinaten-Transformation
+void getCalibratedTransform(float crop_x, float crop_y, float crop_width, float crop_height, float& fullscreen_x, float& fullscreen_y) {
+    transformCropToFullscreen(crop_x, crop_y, crop_width, crop_height, fullscreen_x, fullscreen_y);
+}
+
 void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_objects) {
     // Thread-safe Update der globalen Koordinaten
     {

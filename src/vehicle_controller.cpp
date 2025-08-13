@@ -1,4 +1,3 @@
-
 #include "vehicle_controller.h"
 #include <algorithm>
 #include <random>
@@ -53,11 +52,11 @@ void VehicleController::spawnInitialVehicles() {
     for (int i = 0; i < 4 && i * nodeStep < nodes.size(); i++) {
         const PathNode& node = nodes[i * nodeStep];
         int vehicleId = addVehicle(node.position);
-        
+
         // Map colors to vehicle IDs
         std::string colorKey = "Heck" + std::to_string(i + 1);
         colorToVehicleId[colorKey] = vehicleId;
-        
+
         std::cout << "Spawned vehicle " << (i + 1) << " at node " << node.nodeId
                   << " (" << node.position.x << ", " << node.position.y << ")" << std::endl;
     }
@@ -68,34 +67,45 @@ void VehicleController::spawnInitialVehicles() {
 void VehicleController::updateVehicleFromRealCoordinates(int vehicleId, const Point& realPosition, float realDirection) {
     Auto* vehicle = getVehicle(vehicleId);
     if (!vehicle) return;
-    
+
     // Store old position for change detection
     Point oldPosition = vehicle->position;
     int oldNodeId = vehicle->currentNodeId;
-    
+
     // Update position from real coordinates
     vehicle->position = realPosition;
     vehicle->currentDirection = static_cast<Direction>((int)realDirection);
-    
+
     // If vehicle doesn't have a current node or is far from it, update current node
     if (vehicle->currentNodeId == -1) {
-        int nearestNode = pathSystem->findNearestNode(realPosition, 100.0f);
+        // Try increasing search radius to find a node
+        int nearestNode = pathSystem->findNearestNode(realPosition, 200.0f);
+        if (nearestNode == -1) {
+            // If still no node found, try even larger radius
+            nearestNode = pathSystem->findNearestNode(realPosition, 500.0f);
+        }
         if (nearestNode != -1) {
             vehicle->currentNodeId = nearestNode;
-            std::cout << "Vehicle " << vehicleId << " snapped to node " << nearestNode << std::endl;
+            std::cout << "Vehicle " << vehicleId << " snapped to node " << nearestNode << " from off-path position" << std::endl;
+        } else {
+            std::cout << "Warning: Vehicle " << vehicleId << " cannot find any nearby node!" << std::endl;
         }
     } else {
         // Check if vehicle is still near its current node
         const PathNode* currentNode = pathSystem->getNode(vehicle->currentNodeId);
         if (currentNode) {
             float distanceToCurrentNode = realPosition.distanceTo(currentNode->position);
-            if (distanceToCurrentNode > 150.0f) {
-                // Vehicle moved far from current node, find new nearest node
-                int nearestNode = pathSystem->findNearestNode(realPosition, 100.0f);
+            if (distanceToCurrentNode > 200.0f) {
+                // Vehicle moved far from current node, find new nearest node with extended search
+                int nearestNode = pathSystem->findNearestNode(realPosition, 300.0f);
+                if (nearestNode == -1) {
+                    // Try even larger radius if needed
+                    nearestNode = pathSystem->findNearestNode(realPosition, 500.0f);
+                }
                 if (nearestNode != -1 && nearestNode != vehicle->currentNodeId) {
                     vehicle->currentNodeId = nearestNode;
-                    std::cout << "Vehicle " << vehicleId << " moved to node " << nearestNode << std::endl;
-                    
+                    std::cout << "Vehicle " << vehicleId << " relocated to node " << nearestNode << " (was off-path)" << std::endl;
+
                     // If vehicle has a target and moved to different node, replan route
                     if (vehicle->targetNodeId != -1 && nearestNode != oldNodeId) {
                         if (planPath(vehicleId, vehicle->targetNodeId)) {
@@ -106,7 +116,7 @@ void VehicleController::updateVehicleFromRealCoordinates(int vehicleId, const Po
             }
         }
     }
-    
+
     // Check if vehicle was moved significantly and adjust route accordingly
     float movementDistance = oldPosition.distanceTo(realPosition);
     if (movementDistance > 80.0f && vehicle->targetNodeId != -1) {
@@ -125,11 +135,11 @@ int VehicleController::mapRealVehicleToSystem(const Point& realPosition, const s
     if (it != colorToVehicleId.end()) {
         return it->second;
     }
-    
+
     // Create new vehicle for this color
     int vehicleId = addVehicle(realPosition);
     colorToVehicleId[vehicleColor] = vehicleId;
-    
+
     std::cout << "Mapped new vehicle " << vehicleColor << " to ID " << vehicleId << std::endl;
     return vehicleId;
 }
@@ -137,13 +147,13 @@ int VehicleController::mapRealVehicleToSystem(const Point& realPosition, const s
 void VehicleController::syncRealVehiclesWithSystem(const std::vector<Auto>& detectedAutos) {
     for (const auto& detectedAuto : detectedAutos) {
         if (!detectedAuto.isValid()) continue;
-        
+
         // Extract vehicle color/ID from detected auto
         std::string vehicleColor = "Heck" + std::to_string(detectedAuto.getId());
-        
+
         // Map to system vehicle
         int vehicleId = mapRealVehicleToSystem(detectedAuto.getCenter(), vehicleColor);
-        
+
         // Update position and direction
         updateVehicleFromRealCoordinates(vehicleId, detectedAuto.getCenter(), detectedAuto.getDirection());
     }
@@ -192,7 +202,7 @@ void VehicleController::assignRandomTargetsToAllVehicles() {
     if (!pathSystem || pathSystem->getNodeCount() < 2) return;
 
     const auto& nodes = pathSystem->getNodes();
-    
+
     // Filter out waiting nodes - only use regular nodes as targets
     std::vector<int> validTargetNodes;
     for (const auto& node : nodes) {
@@ -200,7 +210,7 @@ void VehicleController::assignRandomTargetsToAllVehicles() {
             validTargetNodes.push_back(node.nodeId);
         }
     }
-    
+
     if (validTargetNodes.empty()) {
         std::cout << "No valid target nodes available (no non-waiting nodes)" << std::endl;
         return;
@@ -263,16 +273,44 @@ bool VehicleController::planPath(int vehicleId, int targetNodeId) {
     }
 }
 
-void VehicleController::updateVehicles(float deltaTime) {
-    // Coordinate movements between vehicles
-    coordinateVehicleMovements();
+void VehicleController::updateVehiclePaths() {
+    for (Auto& vehicle : vehicles) {
+        // If vehicle has a target and is not already moving towards it or has an invalid path
+        if (vehicle.targetNodeId != -1) {
+            // If vehicle is not on a path, or has reached the end of its current path, or its current node is no longer the start of the next segment
+            if (vehicle.currentPath.empty() ||
+                vehicle.currentSegmentIndex >= vehicle.currentPath.size() ||
+                (vehicle.currentSegmentIndex < vehicle.currentPath.size() &&
+                 pathSystem->getSegment(vehicle.currentPath[vehicle.currentSegmentIndex])->startNodeId != vehicle.currentNodeId))
+            {
+                // If the vehicle is not at the target, replan
+                if (vehicle.currentNodeId != vehicle.targetNodeId) {
+                    if (planPath(vehicle.vehicleId, vehicle.targetNodeId)) {
+                        std::cout << "Vehicle " << vehicle.vehicleId << " continuously replanned path to node " << vehicle.targetNodeId << std::endl;
+                    }
+                } else {
+                    // Vehicle is at the target
+                    vehicle.state = VehicleState::ARRIVED;
+                    vehicle.currentPath.clear();
+                }
+            }
+        }
+    }
+}
 
+void VehicleController::updateVehicleMovements(float deltaTime) {
     for (Auto& vehicle : vehicles) {
         updateVehicleMovement(vehicle, deltaTime);
     }
 
     // Update segment manager queues
     segmentManager->updateQueues();
+}
+
+void VehicleController::updateVehicles(float deltaTime) {
+    // This is the main update function called from the simulation
+    updateVehicleMovements(deltaTime);
+    coordinateVehicleMovements();
 }
 
 void VehicleController::coordinateVehicleMovements() {
@@ -287,7 +325,7 @@ void VehicleController::coordinateVehicleMovements() {
                     // Try to find alternative path
                     std::vector<int> altPath = segmentManager->findAvailablePath(
                         vehicle.currentNodeId, vehicle.targetNodeId, vehicle.vehicleId);
-                    
+
                     if (!altPath.empty() && altPath != vehicle.currentPath) {
                         vehicle.currentPath = altPath;
                         vehicle.currentSegmentIndex = 0;
@@ -321,15 +359,15 @@ void VehicleController::updateVehicleMovement(Auto& vehicle, float deltaTime) {
                 }
             }
             break;
-            
+
         case VehicleState::MOVING:
             moveVehicleAlongPath(vehicle, deltaTime);
             break;
-            
+
         case VehicleState::WAITING:
             handleBlockedVehicle(vehicle);
             break;
-            
+
         case VehicleState::ARRIVED:
             // Vehicle stays at destination
             break;
@@ -366,11 +404,11 @@ void VehicleController::moveVehicleAlongPath(Auto& vehicle, float deltaTime) {
     // Determine target position
     Point targetPos;
     int targetNodeId;
-    
+
     // Determine which end of the segment to go to
     float distToStart = vehicle.position.distanceTo(startNode->position);
     float distToEnd = vehicle.position.distanceTo(endNode->position);
-    
+
     if (distToStart > distToEnd) {
         targetPos = endNode->position;
         targetNodeId = endNode->nodeId;
