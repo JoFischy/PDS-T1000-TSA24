@@ -547,10 +547,13 @@ void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
     }
 }
 
-// Zeichne ein Auto (wie in renderer.cpp)
+// Zeichne ein Auto als kompakten Punkt mit Richtungspfeil
 void drawAutoGDI(HDC hdc, const Auto& auto_) {
     if (!auto_.isValid()) return;
 
+    Point center = auto_.getCenter();
+    Point frontPoint = auto_.getFrontPoint();
+    
     // Hole Fenster-Dimensionen für Skalierung
     RECT windowRect;
     if (!GetClientRect(g_test_window_hwnd, &windowRect)) {
@@ -559,93 +562,73 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     
     int windowWidth = windowRect.right - windowRect.left;
     int windowHeight = windowRect.bottom - windowRect.top;
+    
+    // Raylib-Fenster-Dimensionen (Vollbild oder maximiert)
+    int raylib_width = GetSystemMetrics(SM_CXSCREEN);
+    int raylib_height = GetSystemMetrics(SM_CYSCREEN);
+    
+    // Einfache Skalierung: Raylib-Koordinaten auf Test-Fenster
+    float scaleX = (float)windowWidth / raylib_width;
+    float scaleY = (float)windowHeight / raylib_height;
+    
+    Point scaledCenter(center.x * scaleX, center.y * scaleY);
+    Point scaledFront(frontPoint.x * scaleX, frontPoint.y * scaleY);
 
-    Point idPoint = auto_.getIdentificationPoint();
-    Point frontPoint = auto_.getFrontPoint();
-    Point center = auto_.getCenter();
-
-    // Die Auto-Koordinaten kommen aus dem gecroppten Bereich (nach crop_frame)
-    // Crop-Einstellungen aus Farberkennung.py: crop_left=50, crop_right=50, crop_top=50, crop_bottom=50
-    // Annahme: Original-Frame ist 1920x1080, gecroppt wird zu ca. 1820x980
-    float originalWidth = 1920.0f;
-    float originalHeight = 1080.0f;
-    float cropLeft = 50.0f;
-    float cropTop = 50.0f;
-    float cropWidth = originalWidth - 50.0f - 50.0f;  // 1820
-    float cropHeight = originalHeight - 50.0f - 50.0f; // 980
-    
-    // Auto-Koordinaten sind im Original-Frame (bereits aus dem Crop zurück-transformiert)
-    // Jetzt skalieren wir sie auf die Test-Fenster-Größe basierend auf dem gecroppten Bereich
-    float scaleX = (float)windowWidth / cropWidth;
-    float scaleY = (float)windowHeight / cropHeight;
-    
-    // Die Koordinaten sind bereits zum Original-Frame zurück-transformiert,
-    // also müssen wir den Crop-Offset abziehen und dann skalieren
-    Point scaledIdPoint((idPoint.x - cropLeft) * scaleX, (idPoint.y - cropTop) * scaleY);
-    Point scaledFrontPoint((frontPoint.x - cropLeft) * scaleX, (frontPoint.y - cropTop) * scaleY);
-    Point scaledCenter((center.x - cropLeft) * scaleX, (center.y - cropTop) * scaleY);
-
-    // Grüne Linie zwischen den Punkten
-    HPEN greenPen = CreatePen(PS_SOLID, 6, RGB(0, 255, 0));
-    HGDIOBJ oldPen = SelectObject(hdc, greenPen);
-    
-    MoveToEx(hdc, static_cast<int>(scaledIdPoint.x), static_cast<int>(scaledIdPoint.y), nullptr);
-    LineTo(hdc, static_cast<int>(scaledFrontPoint.x), static_cast<int>(scaledFrontPoint.y));
-    
-    SelectObject(hdc, oldPen);
-    DeleteObject(greenPen);
-
-    // Grüner Mittelpunkt
-    HBRUSH greenBrush = CreateSolidBrush(RGB(0, 255, 0));
-    HGDIOBJ oldBrush = SelectObject(hdc, greenBrush);
-    
-    int centerRadius = 8;
-    Ellipse(hdc, 
-            static_cast<int>(scaledCenter.x - centerRadius), 
-            static_cast<int>(scaledCenter.y - centerRadius),
-            static_cast<int>(scaledCenter.x + centerRadius), 
-            static_cast<int>(scaledCenter.y + centerRadius));
-    
-    SelectObject(hdc, oldBrush);
-    DeleteObject(greenBrush);
-
-    // Oranger Richtungspfeil
-    float dx = scaledFrontPoint.x - scaledIdPoint.x;
-    float dy = scaledFrontPoint.y - scaledIdPoint.y;
+    // Berechne Richtungsvektor
+    float dx = scaledFront.x - scaledCenter.x;
+    float dy = scaledFront.y - scaledCenter.y;
     float length = sqrt(dx * dx + dy * dy);
     
     if (length > 0) {
         dx /= length;
         dy /= length;
-        
-        float arrowLength = 30.0f;
-        float arrowEndX = scaledIdPoint.x + dx * arrowLength;
-        float arrowEndY = scaledIdPoint.y + dy * arrowLength;
-        
-        HPEN orangePen = CreatePen(PS_SOLID, 4, RGB(255, 165, 0));
-        SelectObject(hdc, orangePen);
-        
-        MoveToEx(hdc, static_cast<int>(scaledIdPoint.x), static_cast<int>(scaledIdPoint.y), nullptr);
-        LineTo(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY));
-        
-        // Pfeilspitze
-        float headLength = 10.0f;
-        float headAngle = 30.0f * M_PI / 180.0f;
-        float dirRad = atan2(dy, dx);
-        
-        float head1X = arrowEndX - cos(dirRad - headAngle) * headLength;
-        float head1Y = arrowEndY - sin(dirRad - headAngle) * headLength;
-        float head2X = arrowEndX - cos(dirRad + headAngle) * headLength;
-        float head2Y = arrowEndY - sin(dirRad + headAngle) * headLength;
-        
-        MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
-        LineTo(hdc, static_cast<int>(head1X), static_cast<int>(head1Y));
-        MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
-        LineTo(hdc, static_cast<int>(head2X), static_cast<int>(head2Y));
-        
-        SelectObject(hdc, oldPen);
-        DeleteObject(orangePen);
     }
+
+    // Auto-Mittelpunkt als grüner Kreis
+    HBRUSH autoBrush = CreateSolidBrush(RGB(0, 255, 0));
+    HGDIOBJ oldBrush = SelectObject(hdc, autoBrush);
+    HPEN autoPen = CreatePen(PS_SOLID, 2, RGB(0, 180, 0));
+    HGDIOBJ oldPen = SelectObject(hdc, autoPen);
+    
+    int radius = 12;
+    Ellipse(hdc, 
+            static_cast<int>(scaledCenter.x - radius), 
+            static_cast<int>(scaledCenter.y - radius),
+            static_cast<int>(scaledCenter.x + radius), 
+            static_cast<int>(scaledCenter.y + radius));
+    
+    SelectObject(hdc, oldBrush);
+    DeleteObject(autoBrush);
+
+    // Richtungspfeil (kompakt)
+    HPEN arrowPen = CreatePen(PS_SOLID, 4, RGB(255, 100, 0));
+    SelectObject(hdc, arrowPen);
+    
+    float arrowLength = 25.0f;
+    float arrowEndX = scaledCenter.x + dx * arrowLength;
+    float arrowEndY = scaledCenter.y + dy * arrowLength;
+    
+    // Hauptlinie des Pfeils
+    MoveToEx(hdc, static_cast<int>(scaledCenter.x), static_cast<int>(scaledCenter.y), nullptr);
+    LineTo(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY));
+    
+    // Pfeilspitze
+    float arrowHeadLength = 8.0f;
+    float arrowHeadAngle = 0.5f;
+    
+    float leftX = arrowEndX - (dx * cos(arrowHeadAngle) - dy * sin(arrowHeadAngle)) * arrowHeadLength;
+    float leftY = arrowEndY - (dx * sin(arrowHeadAngle) + dy * cos(arrowHeadAngle)) * arrowHeadLength;
+    float rightX = arrowEndX - (dx * cos(-arrowHeadAngle) - dy * sin(-arrowHeadAngle)) * arrowHeadLength;
+    float rightY = arrowEndY - (dx * sin(-arrowHeadAngle) + dy * cos(-arrowHeadAngle)) * arrowHeadLength;
+    
+    MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
+    LineTo(hdc, static_cast<int>(leftX), static_cast<int>(leftY));
+    MoveToEx(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY), nullptr);
+    LineTo(hdc, static_cast<int>(rightX), static_cast<int>(rightY));
+    
+    SelectObject(hdc, oldPen);
+    DeleteObject(autoPen);
+    DeleteObject(arrowPen);
 }
 
 LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -712,14 +695,9 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                 }
             }
             
-            // Zeichne erkannte Autos (von Kamera)
+            // Zeichne erkannte Autos (berechnete Fahrzeuge mit Richtungspfeil)
             for (const Auto& auto_ : current_autos) {
                 drawAutoGDI(memDC, auto_);
-            }
-            
-            // Zeichne erkannte Punkte (von Kamera)
-            for (const Point& point : current_points) {
-                drawPointGDI(memDC, point, false);
             }
             
             // UI-Info links oben (minimal wie im Original)
@@ -775,9 +753,20 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             int mouseY = HIWORD(lParam);
             
             if (g_path_system && g_vehicle_controller) {
-                // Finde nächsten Knoten zum Mausklick
-                Point clickPos(mouseX, mouseY);
-                int nearestNodeId = g_path_system->findNearestNode(clickPos, 80.0f);
+                // Transformiere Test-Fenster Koordinaten zu Raylib-Koordinaten
+                RECT windowRect;
+                GetClientRect(hwnd, &windowRect);
+                int windowWidth = windowRect.right - windowRect.left;
+                int windowHeight = windowRect.bottom - windowRect.top;
+                
+                int raylib_width = GetSystemMetrics(SM_CXSCREEN);
+                int raylib_height = GetSystemMetrics(SM_CYSCREEN);
+                
+                float raylibX = (float)mouseX * raylib_width / windowWidth;
+                float raylibY = (float)mouseY * raylib_height / windowHeight;
+                
+                Point clickPos(raylibX, raylibY);
+                int nearestNodeId = g_path_system->findNearestNode(clickPos, 100.0f);
                 
                 if (nearestNodeId != -1) {
                     // Hole aktuelle Daten
@@ -787,16 +776,24 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                         current_autos = g_detected_autos;
                     }
                     
-                    // Setze Ziel für alle Fahrzeuge (oder nur das erste)
-                    if (!current_autos.empty()) {
-                        int vehicleId = current_autos[0].getId();
-                        const_cast<VehicleController*>(g_vehicle_controller)->setVehicleTargetNode(vehicleId, nearestNodeId);
-                        
-                        char message[256];
-                        snprintf(message, sizeof(message), "Fahrzeug %d Route gesetzt zu Knoten %d", 
-                                vehicleId + 1, nearestNodeId);
-                        MessageBoxA(hwnd, message, "Route gesetzt", MB_OK | MB_ICONINFORMATION);
+                    // Setze Ziel für das erste gültige Fahrzeug
+                    for (const Auto& auto_ : current_autos) {
+                        if (auto_.isValid()) {
+                            int vehicleId = auto_.getId();
+                            const_cast<VehicleController*>(g_vehicle_controller)->setVehicleTargetNode(vehicleId, nearestNodeId);
+                            
+                            char message[256];
+                            snprintf(message, sizeof(message), "Auto %d Route zu Knoten %d gesetzt\nKlick: (%.0f, %.0f)", 
+                                    vehicleId, nearestNodeId, raylibX, raylibY);
+                            MessageBoxA(hwnd, message, "Route geplant", MB_OK | MB_ICONINFORMATION);
+                            break; // Nur für das erste Auto eine Route setzen
+                        }
                     }
+                } else {
+                    char message[256];
+                    snprintf(message, sizeof(message), "Kein Knoten gefunden bei (%.0f, %.0f)\nVersuche näher an einen Knoten zu klicken", 
+                            raylibX, raylibY);
+                    MessageBoxA(hwnd, message, "Kein Ziel gefunden", MB_OK | MB_ICONWARNING);
                 }
             }
             return 0;
