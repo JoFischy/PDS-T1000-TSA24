@@ -6,6 +6,9 @@
 #include "point.h"
 #include "auto.h"
 #include "coordinate_filter.h"
+#include "path_system.h"
+#include "segment_manager.h"
+#include "vehicle_controller.h"
 #include <vector>
 #include <memory>
 
@@ -43,7 +46,18 @@ private:
     float time_elapsed;
     float car_point_distance;
     float distance_buffer;
-    std::unique_ptr<CoordinateFilter> fastFilter; // Schneller Filter für minimale Verzögerung
+    std::unique_ptr<CoordinateFilter> fastFilter;
+
+    // New path system components
+    PathSystem pathSystem;
+    SegmentManager* segmentManager;
+    VehicleController* vehicleController;
+    bool pathSystemInitialized;
+
+    // Input handling
+    int selectedVehicle;
+    void handleVehicleSelection();
+    void handleTargetAssignment();
 
 public:
     // Constructor and Destructor
@@ -69,11 +83,21 @@ public:
     void setCarPointDistance(float distance);
     void setDistanceBuffer(float buffer);
 
+    // New path system methods
+    void initializePathSystem();
+    void createFactoryPathSystem();
+    void syncDetectedVehiclesWithPathSystem();
+    int mapDetectedVehicleToPathSystem(const Auto& detectedAuto);
+
 private:
     // Private helper methods for simulation logic
     void detectVehicles(); // Logic to detect vehicles from points
     // Converts camera coordinates to window coordinates
     void cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y);
+    
+    // Path system helpers
+    Point transformToPathSystemCoordinates(const Point& detectedPosition, const FieldTransform& transform);
+    void updateVehicleFromDetection(int vehicleId, const Auto& detectedAuto, const FieldTransform& transform);
 };
 
 #endif // CAR_SIMULATION_H

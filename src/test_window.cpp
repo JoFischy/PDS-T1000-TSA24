@@ -10,6 +10,8 @@
 #include "Vehicle.h"
 #include "auto.h"
 #include "point.h"
+#include "path_system.h"
+#include "vehicle_controller.h"
 
 // Alternative: Einfaches Windows API Fenster (ohne Raylib Includes hier)
 #ifdef _WIN32
@@ -39,11 +41,37 @@ static HWND g_test_window_hwnd = nullptr;
 static float g_tolerance = 150.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
 
+// Globale Variablen für PathSystem und VehicleController
+static const PathSystem* g_path_system = nullptr;
+static const VehicleController* g_vehicle_controller = nullptr;
+
 // Kalibrierungsparameter für Koordinaten-Anpassung
 static float g_x_scale = 1.0f;          // X-Skalierung (Standard: 1.0)
 static float g_y_scale = 1.0f;          // Y-Skalierung (Standard: 1.0)
-static float g_x_offset = 0.0f;         // X-Verschiebung in Pixeln
-static float g_y_offset = 0.0f;         // Y-Verschiebung in Pixeln
+static float g_x_offset = 0.0f;         // X-Offset
+static float g_y_offset = 0.0f;         // Y-Offset
+
+// PathSystem Koordinaten-Skalierung
+static const float ORIGINAL_WIDTH = 1920.0f;   // Original PathSystem Breite
+static const float ORIGINAL_HEIGHT = 1200.0f;  // Original PathSystem Höhe
+
+// Skalierungsfunktion für PathSystem-Koordinaten
+Point scalePathSystemCoordinates(float originalX, float originalY, int windowWidth, int windowHeight) {
+    float scaleX = windowWidth / ORIGINAL_WIDTH;
+    float scaleY = windowHeight / ORIGINAL_HEIGHT;
+    
+    // Verwende das kleinere der beiden Skalierungen, um Proportionen zu bewahren
+    float scale = std::min(scaleX, scaleY);
+    
+    float scaledX = originalX * scale;
+    float scaledY = originalY * scale;
+    
+    // Zentriere das Bild
+    float offsetX = (windowWidth - ORIGINAL_WIDTH * scale) / 2.0f;
+    float offsetY = (windowHeight - ORIGINAL_HEIGHT * scale) / 2.0f;
+    
+    return Point(scaledX + offsetX, scaledY + offsetY);
+}
 static float g_x_curve = 0.0f;          // X-Kurvenkorrektur für Mitte/Rand-Problem
 static float g_y_curve = 0.0f;          // Y-Kurvenkorrektur für Oben/Unten-Problem
 
@@ -278,8 +306,210 @@ void detectVehiclesInTestWindow() {
     }
 }
 
+// Zeichne PathSystem-Knoten
+void drawPathNodeGDI(HDC hdc, const PathNode& node) {
+    // Hole Fenster-Dimensionen für Skalierung
+    RECT windowRect;
+    if (!GetClientRect(g_test_window_hwnd, &windowRect)) {
+        return; // Fehler beim Ermitteln der Fenstergröße
+    }
+    
+    int windowWidth = windowRect.right - windowRect.left;
+    int windowHeight = windowRect.bottom - windowRect.top;
+    
+    // Skaliere die Knoten-Position
+    Point scaledPos = scalePathSystemCoordinates(node.position.x, node.position.y, windowWidth, windowHeight);
+    
+    // Verschiedene Farben für verschiedene Knotentypen
+    COLORREF nodeColor = RGB(70, 130, 255); // Blau für normale Knoten
+    COLORREF borderColor = RGB(0, 0, 0);    // Schwarzer Rand
+    
+    if (node.isWaitingNode) {
+        nodeColor = RGB(255, 150, 0); // Orange für Warteknoten
+        borderColor = RGB(200, 100, 0);
+    }
+    
+    // Bestimme Knotentyp basierend auf Verbindungen
+    int connectionCount = node.connectedSegments.size();
+    if (connectionCount >= 4) {
+        nodeColor = RGB(255, 0, 0);   // Rot für Kreuzungen (4+ Verbindungen)
+        borderColor = RGB(200, 0, 0);
+    } else if (connectionCount == 3) {
+        nodeColor = RGB(255, 255, 0); // Gelb für T-Kreuzungen
+        borderColor = RGB(200, 200, 0);
+    }
+    
+    HBRUSH brush = CreateSolidBrush(nodeColor);
+    HPEN pen = CreatePen(PS_SOLID, 2, borderColor);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    
+    // Knoten zeichnen (größer als normale Punkte)
+    int radius = 15;
+    Ellipse(hdc, 
+            static_cast<int>(scaledPos.x - radius), 
+            static_cast<int>(scaledPos.y - radius),
+            static_cast<int>(scaledPos.x + radius), 
+            static_cast<int>(scaledPos.y + radius));
+    
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+    
+    // Node-ID als Label
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(0, 0, 0));
+    
+    char nodeLabel[16];
+    snprintf(nodeLabel, sizeof(nodeLabel), "%d", node.nodeId);
+    TextOutA(hdc, static_cast<int>(scaledPos.x + 20), static_cast<int>(scaledPos.y - 10), 
+             nodeLabel, strlen(nodeLabel));
+}
+
+// Zeichne PathSystem-Segment
+void drawPathSegmentGDI(HDC hdc, const PathSegment& segment, const PathSystem& pathSystem) {
+    const PathNode* startNode = pathSystem.getNode(segment.startNodeId);
+    const PathNode* endNode = pathSystem.getNode(segment.endNodeId);
+    
+    if (!startNode || !endNode) return;
+    
+    // Hole Fenster-Dimensionen für Skalierung
+    RECT windowRect;
+    if (!GetClientRect(g_test_window_hwnd, &windowRect)) {
+        return; // Fehler beim Ermitteln der Fenstergröße
+    }
+    
+    int windowWidth = windowRect.right - windowRect.left;
+    int windowHeight = windowRect.bottom - windowRect.top;
+    
+    // Skaliere die Start- und End-Positionen
+    Point scaledStart = scalePathSystemCoordinates(startNode->position.x, startNode->position.y, windowWidth, windowHeight);
+    Point scaledEnd = scalePathSystemCoordinates(endNode->position.x, endNode->position.y, windowWidth, windowHeight);
+    
+    // Farbe basierend auf Belegung
+    COLORREF segmentColor = RGB(150, 150, 150); // Grau für freie Segmente
+    if (segment.isOccupied) {
+        segmentColor = RGB(200, 50, 200); // Magenta für belegte Segmente
+    }
+    
+    HPEN pen = CreatePen(PS_SOLID, 4, segmentColor);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    
+    MoveToEx(hdc, static_cast<int>(scaledStart.x), static_cast<int>(scaledStart.y), nullptr);
+    LineTo(hdc, static_cast<int>(scaledEnd.x), static_cast<int>(scaledEnd.y));
+    
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+// Zeichne Fahrzeugroute
+void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSystem) {
+    if (!g_vehicle_controller) return;
+    
+    // Finde das entsprechende Vehicle im Controller
+    const auto& vehicles = g_vehicle_controller->getVehicles();
+    for (const auto& controllerVehicle : vehicles) {
+        if (controllerVehicle.vehicleId == vehicle.getId()) {
+            if (controllerVehicle.currentPath.empty()) continue;
+            
+            // Routenfarbe basierend auf Fahrzeug-ID
+            COLORREF routeColors[] = {
+                RGB(0, 255, 0),   // Grün
+                RGB(255, 255, 0), // Gelb  
+                RGB(255, 165, 0), // Orange
+                RGB(128, 0, 128)  // Lila
+            };
+            COLORREF routeColor = routeColors[vehicle.getId() % 4];
+            
+            HPEN routePen = CreatePen(PS_SOLID, 6, routeColor);
+            HGDIOBJ oldPen = SelectObject(hdc, routePen);
+            
+            // Zeichne Routensegmente
+            for (size_t i = controllerVehicle.currentSegmentIndex; i < controllerVehicle.currentPath.size(); i++) {
+                int segmentId = controllerVehicle.currentPath[i];
+                const PathSegment* segment = pathSystem.getSegment(segmentId);
+                
+                if (segment) {
+                    const PathNode* startNode = pathSystem.getNode(segment->startNodeId);
+                    const PathNode* endNode = pathSystem.getNode(segment->endNodeId);
+                    
+                    if (startNode && endNode) {
+                        // Aktuelles Segment dicker zeichnen
+                        if (i == controllerVehicle.currentSegmentIndex) {
+                            SelectObject(hdc, oldPen);
+                            DeleteObject(routePen);
+                            routePen = CreatePen(PS_SOLID, 8, routeColor);
+                            SelectObject(hdc, routePen);
+                        }
+                        
+                        // Hole Fenster-Dimensionen für Skalierung
+                        RECT windowRect;
+                        if (GetClientRect(g_test_window_hwnd, &windowRect)) {
+                            int windowWidth = windowRect.right - windowRect.left;
+                            int windowHeight = windowRect.bottom - windowRect.top;
+                            
+                            Point scaledStart = scalePathSystemCoordinates(startNode->position.x, startNode->position.y, windowWidth, windowHeight);
+                            Point scaledEnd = scalePathSystemCoordinates(endNode->position.x, endNode->position.y, windowWidth, windowHeight);
+                            
+                            MoveToEx(hdc, static_cast<int>(scaledStart.x), 
+                                    static_cast<int>(scaledStart.y), nullptr);
+                            LineTo(hdc, static_cast<int>(scaledEnd.x), 
+                                   static_cast<int>(scaledEnd.y));
+                        }
+                    }
+                }
+            }
+            
+            SelectObject(hdc, oldPen);
+            DeleteObject(routePen);
+            
+            // Zeichne Zielknoten
+            if (controllerVehicle.targetNodeId != -1) {
+                const PathNode* targetNode = pathSystem.getNode(controllerVehicle.targetNodeId);
+                if (targetNode) {
+                    // Hole Fenster-Dimensionen für Skalierung
+                    RECT windowRect;
+                    if (GetClientRect(g_test_window_hwnd, &windowRect)) {
+                        int windowWidth = windowRect.right - windowRect.left;
+                        int windowHeight = windowRect.bottom - windowRect.top;
+                        
+                        Point scaledTarget = scalePathSystemCoordinates(targetNode->position.x, targetNode->position.y, windowWidth, windowHeight);
+                        
+                        HBRUSH targetBrush = CreateSolidBrush(routeColor);
+                        HGDIOBJ oldBrush = SelectObject(hdc, targetBrush);
+                        
+                        int targetRadius = 20;
+                        Ellipse(hdc, 
+                                static_cast<int>(scaledTarget.x - targetRadius), 
+                                static_cast<int>(scaledTarget.y - targetRadius),
+                                static_cast<int>(scaledTarget.x + targetRadius), 
+                                static_cast<int>(scaledTarget.y + targetRadius));
+                        
+                        SelectObject(hdc, oldBrush);
+                        DeleteObject(targetBrush);
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
 // Zeichne einen Punkt (wie in renderer.cpp)
 void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
+    // Hole Fenster-Dimensionen für Skalierung
+    RECT windowRect;
+    if (!GetClientRect(g_test_window_hwnd, &windowRect)) {
+        return; // Fehler beim Ermitteln der Fenstergröße
+    }
+    
+    int windowWidth = windowRect.right - windowRect.left;
+    int windowHeight = windowRect.bottom - windowRect.top;
+    
+    // Skaliere die Punkt-Position
+    Point scaledPoint = scalePathSystemCoordinates(point.x, point.y, windowWidth, windowHeight);
+    
     HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0)); // Schwarz
     if (isSelected) {
         brush = CreateSolidBrush(RGB(255, 0, 0)); // Rot für Auswahl
@@ -292,10 +522,10 @@ void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
     // Kreis zeichnen (Radius 12 wie im Original)
     int radius = 12;
     Ellipse(hdc, 
-            static_cast<int>(point.x - radius), 
-            static_cast<int>(point.y - radius),
-            static_cast<int>(point.x + radius), 
-            static_cast<int>(point.y + radius));
+            static_cast<int>(scaledPoint.x - radius), 
+            static_cast<int>(scaledPoint.y - radius),
+            static_cast<int>(scaledPoint.x + radius), 
+            static_cast<int>(scaledPoint.y + radius));
     
     SelectObject(hdc, oldBrush);
     SelectObject(hdc, oldPen);
@@ -308,11 +538,11 @@ void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
     
     if (!point.color.empty()) {
         if (point.color == "Front") {
-            TextOutA(hdc, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), "FRONT", 5);
+            TextOutA(hdc, static_cast<int>(scaledPoint.x + 15), static_cast<int>(scaledPoint.y - 15), "FRONT", 5);
         } else if (point.color.find("Heck") == 0) {
             std::string label = point.color;
             std::transform(label.begin(), label.end(), label.begin(), ::toupper);
-            TextOutA(hdc, static_cast<int>(point.x + 15), static_cast<int>(point.y - 15), label.c_str(), label.length());
+            TextOutA(hdc, static_cast<int>(scaledPoint.x + 15), static_cast<int>(scaledPoint.y - 15), label.c_str(), label.length());
         }
     }
 }
@@ -321,16 +551,46 @@ void drawPointGDI(HDC hdc, const Point& point, bool isSelected) {
 void drawAutoGDI(HDC hdc, const Auto& auto_) {
     if (!auto_.isValid()) return;
 
+    // Hole Fenster-Dimensionen für Skalierung
+    RECT windowRect;
+    if (!GetClientRect(g_test_window_hwnd, &windowRect)) {
+        return; // Fehler beim Ermitteln der Fenstergröße
+    }
+    
+    int windowWidth = windowRect.right - windowRect.left;
+    int windowHeight = windowRect.bottom - windowRect.top;
+
     Point idPoint = auto_.getIdentificationPoint();
     Point frontPoint = auto_.getFrontPoint();
     Point center = auto_.getCenter();
+
+    // Die Auto-Koordinaten kommen aus dem gecroppten Bereich (nach crop_frame)
+    // Crop-Einstellungen aus Farberkennung.py: crop_left=50, crop_right=50, crop_top=50, crop_bottom=50
+    // Annahme: Original-Frame ist 1920x1080, gecroppt wird zu ca. 1820x980
+    float originalWidth = 1920.0f;
+    float originalHeight = 1080.0f;
+    float cropLeft = 50.0f;
+    float cropTop = 50.0f;
+    float cropWidth = originalWidth - 50.0f - 50.0f;  // 1820
+    float cropHeight = originalHeight - 50.0f - 50.0f; // 980
+    
+    // Auto-Koordinaten sind im Original-Frame (bereits aus dem Crop zurück-transformiert)
+    // Jetzt skalieren wir sie auf die Test-Fenster-Größe basierend auf dem gecroppten Bereich
+    float scaleX = (float)windowWidth / cropWidth;
+    float scaleY = (float)windowHeight / cropHeight;
+    
+    // Die Koordinaten sind bereits zum Original-Frame zurück-transformiert,
+    // also müssen wir den Crop-Offset abziehen und dann skalieren
+    Point scaledIdPoint((idPoint.x - cropLeft) * scaleX, (idPoint.y - cropTop) * scaleY);
+    Point scaledFrontPoint((frontPoint.x - cropLeft) * scaleX, (frontPoint.y - cropTop) * scaleY);
+    Point scaledCenter((center.x - cropLeft) * scaleX, (center.y - cropTop) * scaleY);
 
     // Grüne Linie zwischen den Punkten
     HPEN greenPen = CreatePen(PS_SOLID, 6, RGB(0, 255, 0));
     HGDIOBJ oldPen = SelectObject(hdc, greenPen);
     
-    MoveToEx(hdc, static_cast<int>(idPoint.x), static_cast<int>(idPoint.y), nullptr);
-    LineTo(hdc, static_cast<int>(frontPoint.x), static_cast<int>(frontPoint.y));
+    MoveToEx(hdc, static_cast<int>(scaledIdPoint.x), static_cast<int>(scaledIdPoint.y), nullptr);
+    LineTo(hdc, static_cast<int>(scaledFrontPoint.x), static_cast<int>(scaledFrontPoint.y));
     
     SelectObject(hdc, oldPen);
     DeleteObject(greenPen);
@@ -341,17 +601,17 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     
     int centerRadius = 8;
     Ellipse(hdc, 
-            static_cast<int>(center.x - centerRadius), 
-            static_cast<int>(center.y - centerRadius),
-            static_cast<int>(center.x + centerRadius), 
-            static_cast<int>(center.y + centerRadius));
+            static_cast<int>(scaledCenter.x - centerRadius), 
+            static_cast<int>(scaledCenter.y - centerRadius),
+            static_cast<int>(scaledCenter.x + centerRadius), 
+            static_cast<int>(scaledCenter.y + centerRadius));
     
     SelectObject(hdc, oldBrush);
     DeleteObject(greenBrush);
 
     // Oranger Richtungspfeil
-    float dx = frontPoint.x - idPoint.x;
-    float dy = frontPoint.y - idPoint.y;
+    float dx = scaledFrontPoint.x - scaledIdPoint.x;
+    float dy = scaledFrontPoint.y - scaledIdPoint.y;
     float length = sqrt(dx * dx + dy * dy);
     
     if (length > 0) {
@@ -359,13 +619,13 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
         dy /= length;
         
         float arrowLength = 30.0f;
-        float arrowEndX = idPoint.x + dx * arrowLength;
-        float arrowEndY = idPoint.y + dy * arrowLength;
+        float arrowEndX = scaledIdPoint.x + dx * arrowLength;
+        float arrowEndY = scaledIdPoint.y + dy * arrowLength;
         
         HPEN orangePen = CreatePen(PS_SOLID, 4, RGB(255, 165, 0));
         SelectObject(hdc, orangePen);
         
-        MoveToEx(hdc, static_cast<int>(idPoint.x), static_cast<int>(idPoint.y), nullptr);
+        MoveToEx(hdc, static_cast<int>(scaledIdPoint.x), static_cast<int>(scaledIdPoint.y), nullptr);
         LineTo(hdc, static_cast<int>(arrowEndX), static_cast<int>(arrowEndY));
         
         // Pfeilspitze
@@ -434,12 +694,30 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                 current_autos = g_detected_autos;
             }
             
-            // Zeichne Autos zuerst (damit sie hinter den Punkten erscheinen)
+            // Zeichne PathSystem-Elemente (falls verfügbar)
+            if (g_path_system) {
+                // Zeichne zuerst alle Segmente (Pfade)
+                for (const auto& segment : g_path_system->getSegments()) {
+                    drawPathSegmentGDI(memDC, segment, *g_path_system);
+                }
+                
+                // Zeichne alle Knoten
+                for (const auto& node : g_path_system->getNodes()) {
+                    drawPathNodeGDI(memDC, node);
+                }
+                
+                // Zeichne Fahrzeugrouten
+                for (const Auto& auto_ : current_autos) {
+                    drawVehicleRouteGDI(memDC, auto_, *g_path_system);
+                }
+            }
+            
+            // Zeichne erkannte Autos (von Kamera)
             for (const Auto& auto_ : current_autos) {
                 drawAutoGDI(memDC, auto_);
             }
             
-            // Zeichne alle Punkte
+            // Zeichne erkannte Punkte (von Kamera)
             for (const Point& point : current_points) {
                 drawPointGDI(memDC, point, false);
             }
@@ -453,7 +731,7 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                                      DEFAULT_PITCH | FF_SWISS, "Arial");
             HGDIOBJ oldFont = SelectObject(memDC, hFont);
             
-            TextOutA(memDC, 10, 10, "PDS-T1000-TSA24", 15);
+            TextOutA(memDC, 10, 10, "PDS-T1000-TSA24 - KLICK AUF KNOTEN FÜR ROUTE", 45);
             
             // Fahrzeug-Info
             int yOffset = 40;
@@ -489,6 +767,38 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             DeleteDC(memDC);
             
             EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_LBUTTONDOWN: {
+            // Mausklick für Routenauswahl
+            int mouseX = LOWORD(lParam);
+            int mouseY = HIWORD(lParam);
+            
+            if (g_path_system && g_vehicle_controller) {
+                // Finde nächsten Knoten zum Mausklick
+                Point clickPos(mouseX, mouseY);
+                int nearestNodeId = g_path_system->findNearestNode(clickPos, 80.0f);
+                
+                if (nearestNodeId != -1) {
+                    // Hole aktuelle Daten
+                    std::vector<Auto> current_autos;
+                    {
+                        std::lock_guard<std::mutex> lock(g_data_mutex);
+                        current_autos = g_detected_autos;
+                    }
+                    
+                    // Setze Ziel für alle Fahrzeuge (oder nur das erste)
+                    if (!current_autos.empty()) {
+                        int vehicleId = current_autos[0].getId();
+                        const_cast<VehicleController*>(g_vehicle_controller)->setVehicleTargetNode(vehicleId, nearestNodeId);
+                        
+                        char message[256];
+                        snprintf(message, sizeof(message), "Fahrzeug %d Route gesetzt zu Knoten %d", 
+                                vehicleId + 1, nearestNodeId);
+                        MessageBoxA(hwnd, message, "Route gesetzt", MB_OK | MB_ICONINFORMATION);
+                    }
+                }
+            }
             return 0;
         }
         case WM_TIMER:
@@ -596,6 +906,18 @@ void createWindowsAPITestWindow() {
     }).detach();
 }
 
+// Setze PathSystem und VehicleController Referenzen
+void setTestWindowPathSystem(const PathSystem* pathSystem, const VehicleController* vehicleController) {
+    std::lock_guard<std::mutex> lock(g_data_mutex);
+    g_path_system = pathSystem;
+    g_vehicle_controller = vehicleController;
+    
+    // Fenster zur Neuzeichnung veranlassen
+    if (g_test_window_hwnd != nullptr) {
+        InvalidateRect(g_test_window_hwnd, nullptr, FALSE);
+    }
+}
+
 // Update-Funktion für Live-Koordinaten und Auto-Erkennung
 void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_objects) {
     // Thread-safe Update der globalen Koordinaten
@@ -651,6 +973,17 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
     // WENIGER HÄUFIGE UPDATES für weniger Flackern
     if (g_test_window_hwnd != nullptr) {
         InvalidateRect(g_test_window_hwnd, nullptr, FALSE); // FALSE = kein Hintergrund löschen
+    }
+}
+
+// Update-Funktion für erkannte Autos von der Hauptanwendung
+void updateTestWindowVehicles(const std::vector<Auto>& vehicles) {
+    std::lock_guard<std::mutex> lock(g_data_mutex);
+    g_detected_autos = vehicles;
+    
+    // Fenster zur Neuzeichnung veranlassen
+    if (g_test_window_hwnd != nullptr) {
+        InvalidateRect(g_test_window_hwnd, nullptr, FALSE);
     }
 }
 #endif
