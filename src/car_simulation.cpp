@@ -195,9 +195,14 @@ void CarSimulation::renderField() {
 
 void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y) {
     if (obj.crop_width <= 0 || obj.crop_height <= 0) {
+        std::cout << "ERROR: Invalid crop dimensions: " << obj.crop_width << "x" << obj.crop_height << std::endl;
         window_x = window_y = 0;
         return;
     }
+
+    // Debug-Ausgabe für eingehende Daten
+    std::cout << "cameraToWindow Input: obj(" << obj.coordinates.x << ", " << obj.coordinates.y 
+              << ") crop(" << obj.crop_width << ", " << obj.crop_height << ")" << std::endl;
 
     // Die Python-Koordinaten sind bereits Pixel-Koordinaten im Crop-Bereich (nicht normalisiert!)
     // obj.coordinates.x und obj.coordinates.y sind bereits die Pixel-Positionen (z.B. 150, 200)
@@ -205,9 +210,13 @@ void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransfo
     float norm_x = obj.coordinates.x / obj.crop_width;
     float norm_y = obj.coordinates.y / obj.crop_height;
 
-    // Map to entire window area
+    // Map to entire window area (1920x1200 fullscreen)
     window_x = norm_x * transform.field_width;
     window_y = norm_y * transform.field_height;
+    
+    // Debug-Ausgabe für transformierte Koordinaten
+    std::cout << "cameraToWindow Output: norm(" << norm_x << ", " << norm_y 
+              << ") -> window(" << window_x << ", " << window_y << ")" << std::endl;
 }
 
 void CarSimulation::setCarPointDistance(float distance) {
