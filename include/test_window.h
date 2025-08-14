@@ -1,8 +1,10 @@
 #ifndef TEST_WINDOW_H
 #define TEST_WINDOW_H
 
-#include "Vehicle.h"
 #include <vector>
+#include <mutex>
+#include "auto.h"
+#include "point.h"
 
 // Forward declarations
 class PathSystem;
@@ -22,5 +24,10 @@ void setTestWindowPathSystem(const PathSystem* pathSystem, const VehicleControll
 
 // Kalibrierte Koordinaten-Transformation (öffentlich verfügbar)
 void getCalibratedTransform(float crop_x, float crop_y, float crop_width, float crop_height, float& fullscreen_x, float& fullscreen_y);
+
+// Manuelle Test-Funktionen
+Point getManualVehiclePosition();
+void setManualVehicleFromCamera(float x, float y);
+void simulateDetectedObjectFromManualVehicle();
 
 #endif

@@ -58,8 +58,11 @@ static const auto MAX_VEHICLE_AGE = std::chrono::seconds(3); // Fahrzeuge 3 Seku
 static const PathSystem* g_path_system = nullptr;
 static const VehicleController* g_vehicle_controller = nullptr;
 
-// Globale Variablen für Fahrzeugauswahl
+// Globale Variablen für Fahrzeugauswahl und manuelles Auto
 static int g_selected_vehicle_id = -1;
+static Auto g_manual_vehicle;
+static bool g_manual_vehicle_active = false;
+static float g_manual_speed = 3.0f;
 
 // Kalibrierungsparameter für Koordinaten-Anpassung
 static float g_x_scale = 1.0f;          // X-Skalierung (Standard: 1.0)
@@ -93,6 +96,48 @@ static float g_y_curve = 0.0f;          // Y-Kurvenkorrektur für Oben/Unten-Pro
 // static HWND g_trackbar_y_offset = nullptr;
 // static HWND g_trackbar_x_curve = nullptr;
 // static HWND g_trackbar_y_curve = nullptr;
+
+
+// Einfache Funktion um aktuelle Auto-Position zu bekommen (für spätere Kamera-Integration)
+Point getManualVehiclePosition() {
+    if (g_manual_vehicle_active) {
+        return g_manual_vehicle.getCenter();
+    }
+    return Point(0, 0);
+}
+
+// Funktion um manuelles Auto auf Kamera-Koordinaten zu setzen
+void setManualVehicleFromCamera(float x, float y) {
+    if (g_manual_vehicle_active) {
+        Point newPos(x, y);
+        g_manual_vehicle.setPosition(newPos);
+        std::cout << "Vehicle position set from camera: (" << x << ", " << y << ")" << std::endl;
+    }
+}
+
+// Simuliere DetectedObject für Kompatibilität
+void simulateDetectedObjectFromManualVehicle() {
+    if (g_manual_vehicle_active) {
+        std::vector<DetectedObject> simulated;
+        DetectedObject obj;
+        Point pos = g_manual_vehicle.getCenter();
+        obj.coordinates = pos;
+        obj.color = "Heck1";
+        obj.crop_width = FULLSCREEN_WIDTH;
+        obj.crop_height = FULLSCREEN_HEIGHT;
+        simulated.push_back(obj);
+        
+        // Front-Point simulieren (10 Pixel nach vorn)
+        DetectedObject frontObj;
+        frontObj.coordinates = Point(pos.x, pos.y - 10);
+        frontObj.color = "Front";
+        frontObj.crop_width = FULLSCREEN_WIDTH;
+        frontObj.crop_height = FULLSCREEN_HEIGHT;
+        simulated.push_back(frontObj);
+        
+        updateTestWindowCoordinates(simulated);
+    }
+}
 
 // Kalibrierungs-Fenster
 static HWND g_calibration_window = nullptr;
@@ -1066,6 +1111,27 @@ void OnTestWindowPaint(HWND hwnd) {
         DeleteObject(blackBrush);
     }
 
+    // Zeichne manuelles Test-Auto falls aktiv
+    if (g_manual_vehicle_active) {
+        drawAutoGDI(memDC, g_manual_vehicle);
+        
+        // Status-Informationen anzeigen
+        SetTextColor(memDC, RGB(255, 255, 255));
+        SetBkMode(memDC, TRANSPARENT);
+        
+        std::string statusText = "Manual Control Active - Use Arrow Keys to move";
+        TextOutA(memDC, 10, 10, statusText.c_str(), statusText.length());
+        
+        char posText[100];
+        Point pos = g_manual_vehicle.getCenter();
+        sprintf(posText, "Position: (%.1f, %.1f) - Speed: %.1f - SPACE to change speed", 
+                pos.x, pos.y, g_manual_speed);
+        TextOutA(memDC, 10, 30, posText, strlen(posText));
+        
+        std::string instructionText = "UP/DOWN: Forward/Backward, LEFT/RIGHT: Turn, ESC: Exit";
+        TextOutA(memDC, 10, 50, instructionText.c_str(), instructionText.length());
+    }
+    
     if (g_path_system) {
         // Zeichne Knotennetz
         drawNodeNetworkGDI(memDC, *g_path_system);
@@ -1186,6 +1252,51 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             if (wParam == VK_ESCAPE) {
                 PostQuitMessage(0);
             }
+            
+            // Pfeiltasten für manuelle Steuerung
+            if (g_manual_vehicle_active) {
+                Point currentPos = g_manual_vehicle.getCenter();
+                Point newPos = currentPos;
+                bool moved = false;
+                
+                switch (wParam) {
+                    case VK_UP:    // Vorwärts
+                        newPos.y -= g_manual_speed;
+                        moved = true;
+                        std::cout << "Moving forward to (" << newPos.x << ", " << newPos.y << ")" << std::endl;
+                        break;
+                    case VK_DOWN:  // Rückwärts
+                        newPos.y += g_manual_speed;
+                        moved = true;
+                        std::cout << "Moving backward to (" << newPos.x << ", " << newPos.y << ")" << std::endl;
+                        break;
+                    case VK_LEFT:  // Links drehen/bewegen
+                        newPos.x -= g_manual_speed;
+                        moved = true;
+                        std::cout << "Moving left to (" << newPos.x << ", " << newPos.y << ")" << std::endl;
+                        break;
+                    case VK_RIGHT: // Rechts drehen/bewegen
+                        newPos.x += g_manual_speed;
+                        moved = true;
+                        std::cout << "Moving right to (" << newPos.x << ", " << newPos.y << ")" << std::endl;
+                        break;
+                    case VK_SPACE: // Geschwindigkeit ändern
+                        g_manual_speed = (g_manual_speed == 3.0f) ? 6.0f : 3.0f;
+                        std::cout << "Speed changed to " << g_manual_speed << std::endl;
+                        break;
+                }
+                
+                if (moved) {
+                    // Grenzen prüfen
+                    if (newPos.x < 50) newPos.x = 50;
+                    if (newPos.x > FULLSCREEN_WIDTH - 50) newPos.x = FULLSCREEN_WIDTH - 50;
+                    if (newPos.y < 50) newPos.y = 50;
+                    if (newPos.y > FULLSCREEN_HEIGHT - 50) newPos.y = FULLSCREEN_HEIGHT - 50;
+                    
+                    g_manual_vehicle.setPosition(newPos);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
             return 0;
 
         default:
@@ -1195,6 +1306,13 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 void createWindowsAPITestWindow() {
     std::thread([]() {
+        // Initialisiere manuelles Test-Auto in der Mitte
+        Point startPos(FULLSCREEN_WIDTH / 2.0f, FULLSCREEN_HEIGHT / 2.0f);
+        Point frontPos(startPos.x + 20.0f, startPos.y); // 20 Pixel nach rechts
+        g_manual_vehicle = Auto(999, startPos, frontPos);
+        g_manual_vehicle_active = true;
+        std::cout << "Manual test vehicle created at center position (" << startPos.x << ", " << startPos.y << ")" << std::endl;
+        
         // Warte kurz
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
