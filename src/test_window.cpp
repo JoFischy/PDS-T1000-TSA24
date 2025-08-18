@@ -73,13 +73,18 @@ static SerialCommunication g_serial_comm;
 static std::string g_selected_com_port = "";
 static bool g_auto_send_commands = false;
 static std::chrono::steady_clock::time_point g_last_esp_send = std::chrono::steady_clock::now();
-static const int ESP_SEND_INTERVAL_MS = 100; // Alle 100ms ESP-Befehle senden (öftere kurze Befehle für präzise Steuerung)
+static const int ESP_SEND_INTERVAL_MS = 100; // Alle 100ms ESP-Befehle senden (zuverlässige Reaktion)
 
 // ESP-Thread Variablen für völlige Unabhängigkeit von Kamera
 static std::thread g_esp_thread;
 static std::mutex g_esp_mutex;
 static bool g_esp_thread_running = false;
 static bool g_esp_thread_should_stop = false;
+
+// Richtungssteuerungs-Verbesserungen
+static std::unordered_map<int, int> g_last_vehicle_commands; // Letzter Befehl pro Fahrzeug
+static std::unordered_map<int, std::chrono::steady_clock::time_point> g_command_start_times; // Start der aktuellen Befehlszeit
+static const int MAX_TURN_DURATION_MS = 500; // Maximale Drehdauer bevor Zwangsstop
 
 // Globale Variablen für Fahrzeugauswahl und manuelles Auto
 static int g_selected_vehicle_id = -1;
@@ -166,28 +171,43 @@ void espThreadFunction() {
                 auto time_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_last_esp_send).count();
                 
                 if (time_since_last >= ESP_SEND_INTERVAL_MS) {
-                    // ESP-Kommunikation im separaten Thread
-                    if (g_serial_comm.connect(g_selected_com_port, 115200)) {
+                    // ESP-Kommunikation im separaten Thread - DAUERHAFTE Verbindung
+                    static bool esp_connected = false;
+                    
+                    // Einmalig verbinden und Verbindung halten
+                    if (!esp_connected) {
+                        if (g_serial_comm.connect(g_selected_com_port, 115200)) {
+                            esp_connected = true;
+                            std::cout << "� ESP-Thread: Dauerhafte Verbindung hergestellt (" << g_selected_com_port << ")" << std::endl;
+                        } else {
+                            std::cout << "❌ ESP-Thread: Verbindung fehlgeschlagen (" << g_selected_com_port << ")" << std::endl;
+                        }
+                    }
+                    
+                    // Befehle senden (ohne disconnect!)
+                    if (esp_connected) {
                         if (g_serial_comm.sendVehicleCommands()) {
                             std::cout << "📡 ESP-Thread: Befehle gesendet (" << g_selected_com_port << ")" << std::endl;
                         } else {
                             std::cout << "❌ ESP-Thread: Befehle fehlgeschlagen" << std::endl;
+                            // Bei Fehler: Verbindung zurücksetzen für Neuverbindung
+                            esp_connected = false;
+                            g_serial_comm.disconnect();
                         }
-                        g_serial_comm.disconnect();
                         g_last_esp_send = now;
-                    } else {
-                        std::cout << "❌ ESP-Thread: Verbindung fehlgeschlagen (" << g_selected_com_port << ")" << std::endl;
                     }
                 }
             }
         }
         
-        // Thread schläft 50ms - schnelle Reaktion für präzise Fahrzeugsteuerung
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // Thread schläft 25ms - ultra-schnelle Reaktion für kurze präzise Drehungen
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
     
+    // Thread-Ende: Saubere Trennung der ESP-Verbindung
+    g_serial_comm.disconnect();
     g_esp_thread_running = false;
-    std::cout << "🛑 ESP-Thread beendet" << std::endl;
+    std::cout << "🛑 ESP-Thread beendet - Verbindung getrennt" << std::endl;
 }
 
 // Simuliere DetectedObject für Kompatibilität
@@ -960,12 +980,36 @@ void updateVehicleCommands() {
                             if (angleDiff < -180.0f) angleDiff += 360.0f;
                             
                             // Entscheidung basierend auf Winkeldifferenz
-                            if (abs(angleDiff) <= 10.0f) {
-                                command = 1; // Vorwärts - Richtung stimmt (10° Toleranz für geradeaus)
+                            int new_command;
+                            if (abs(angleDiff) <= 8.0f) {
+                                new_command = 1; // Vorwärts - Richtung stimmt (8° Toleranz für schnellere Reaktion)
                             } else if (angleDiff > 0) {
-                                command = 4; // Rechts drehen
+                                new_command = 4; // Rechts drehen
                             } else {
-                                command = 3; // Links drehen
+                                new_command = 3; // Links drehen
+                            }
+                            
+                            // Überprüfe, ob das Fahrzeug zu lange in eine Richtung dreht
+                            auto now = std::chrono::steady_clock::now();
+                            int vehicle_id = auto_.getId();
+                            
+                            // Wenn der Befehl sich geändert hat, reset der Timer
+                            if (g_last_vehicle_commands[vehicle_id] != new_command) {
+                                g_command_start_times[vehicle_id] = now;
+                                g_last_vehicle_commands[vehicle_id] = new_command;
+                            }
+                            
+                            // Prüfe, ob zu lange gedreht wird
+                            auto command_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - g_command_start_times[vehicle_id]).count();
+                            
+                            if ((new_command == 3 || new_command == 4) && command_duration > MAX_TURN_DURATION_MS) {
+                                // Zwangsstop nach zu langem Drehen
+                                command = 1; // Vorwärts fahren
+                                g_command_start_times[vehicle_id] = now; // Reset Timer
+                                std::cout << "🚨 Fahrzeug " << vehicle_id << ": Drehdauer-Limit erreicht, wechsle zu Vorwärts\n";
+                            } else {
+                                command = new_command;
                             }
                         }
                     }

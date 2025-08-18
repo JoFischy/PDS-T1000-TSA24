@@ -190,8 +190,8 @@ bool SerialCommunication::sendVehicleCommands() {
         
         commandCount++;
         
-        // Sehr kurze Pause zwischen Befehlen (nur für saubere Übertragung)
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Minimale Pause zwischen Befehlen (nur für Übertragungssicherheit)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     
     if (commandCount == 0) {
