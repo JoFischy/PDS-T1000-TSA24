@@ -675,50 +675,17 @@ void updateVehicleCommands() {
         firstVehicle = false;
 
         // Finde das entsprechende Vehicle im Controller
-        const auto& vehicles = g_vehicle_controller->getVehicles();
+        const auto& vehicles = g_vehicle_controller->getAllVehicles();
         int command = 5; // 5 = stehen (default)
         int nextNodeId = -1;
 
-        for (const auto& controllerVehicle : vehicles) {
+        for (const auto& [vehicleId, controllerVehicle] : vehicles) {
             if (controllerVehicle.vehicleId == auto_.getId()) {
-                if (!controllerVehicle.currentPath.empty() && 
-                    controllerVehicle.currentSegmentIndex < controllerVehicle.currentPath.size()) {
+                if (!controllerVehicle.currentNodePath.empty() && 
+                    controllerVehicle.currentNodeIndex < controllerVehicle.currentNodePath.size()) {
 
-                    int currentSegmentId = controllerVehicle.currentPath[controllerVehicle.currentSegmentIndex];
-                    const PathSegment* segment = g_path_system->getSegment(currentSegmentId);
-
-                    if (segment) {
-                        const PathNode* startNode = g_path_system->getNode(segment->startNodeId);
-                        const PathNode* endNode = g_path_system->getNode(segment->endNodeId);
-
-                        if (startNode && endNode) {
-                            // Bestimme welcher Knoten das Ziel ist
-                            Point currentPos = auto_.getCenter();
-                            float distToStart = currentPos.distanceTo(startNode->position);
-                            float distToEnd = currentPos.distanceTo(endNode->position);
-
-                            if (distToStart > distToEnd) {
-                                nextNodeId = endNode->nodeId;
-                            } else {
-                                nextNodeId = startNode->nodeId;
-                            }
-
-                            // Berechne Bewegungsrichtung basierend auf aktueller Position und Ziel
-                            Point targetPos = (distToStart > distToEnd) ? endNode->position : startNode->position;
-                            Point currentDirection = auto_.getFrontPoint();
-
-                            // Vereinfachte Richtungsberechnung
-                            float dx = targetPos.x - currentPos.x;
-                            float dy = targetPos.y - currentPos.y;
-
-                            // Bestimme Hauptbewegungsrichtung
-                            if (abs(dx) > abs(dy)) {
-                                command = (dx > 0) ? 4 : 3; // 4 = rechts, 3 = links
-                            } else {
-                                command = (dy > 0) ? 2 : 1; // 2 = rückwärts, 1 = vorwärts
-                            }
-                        }
-                    }
+                    nextNodeId = controllerVehicle.currentNodePath[controllerVehicle.currentNodeIndex];
+                    command = 1; // 1 = vorwärts (simplified for now)
                 }
                 break;
             }
@@ -826,18 +793,61 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     DeleteObject(autoPen);
     DeleteObject(arrowPen);
 
-    // === NEUER ZIELPFEIL: Zeigt zum nächsten Wegpunkt ===
+    // === FAHRZEUG-NUMMER ANZEIGEN ===
+    if (auto_.getId() > 0) {
+        // Zeige die Fahrzeug-ID als Text über dem Auto
+        std::string vehicleText = "ID:" + std::to_string(auto_.getId());
+        
+        // Schwarzer Hintergrund für bessere Lesbarkeit
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, RGB(0, 0, 0));
+        SetTextColor(hdc, RGB(255, 255, 255)); // Weiße Schrift
+        
+        // Text über dem Auto platzieren
+        TextOut(hdc, static_cast<int>(fullscreenCenter.x - 15), 
+                     static_cast<int>(fullscreenCenter.y - 30), 
+                     vehicleText.c_str(), vehicleText.length());
+        
+        // Transparenten Hintergrund wieder herstellen
+        SetBkMode(hdc, TRANSPARENT);
+    }
+
+    // === NEUER ZIELPFEIL: Zeigt zum finalen Ziel ===
     if (g_vehicle_controller && g_path_system) {
         // Finde das entsprechende Vehicle im Controller
-        const auto& vehicles = g_vehicle_controller->getVehicles();
+        const auto& vehicles = g_vehicle_controller->getAllVehicles();
+        
+        // DEBUG: Ausgabe der verfügbaren Fahrzeuge
+        static int debugCounter = 0;
+        if (debugCounter++ % 60 == 0) { // Nur alle 60 Frames (ca. 1x pro Sekunde)
+            std::cout << "DEBUG: Auto ID=" << auto_.getId() << ", Controller hat " << vehicles.size() << " Fahrzeuge:" << std::endl;
+            for (const auto& v : vehicles) {
+                std::cout << "  Vehicle ID=" << v.second.vehicleId << ", targetNodeId=" << v.second.targetNodeId 
+                         << ", currentNodePath.size()=" << v.second.currentNodePath.size() 
+                         << ", currentNodeIndex=" << v.second.currentNodeIndex << std::endl;
+            }
+        }
+        
         for (const auto& vehicle : vehicles) {
-            if (vehicle.getId() == auto_.getId() && vehicle.targetNodeId != -1) {
-                // Hole den nächsten Wegpunkt
-                const PathNode* targetNode = g_path_system->getNode(vehicle.targetNodeId);
+            // Versuche zuerst direkte ID-Zuordnung
+            bool isMatchingVehicle = (vehicle.second.vehicleId == auto_.getId());
+            
+            // Falls ID=0, versuche Position-basiertes Matching
+            if (!isMatchingVehicle && auto_.getId() == 0) {
+                Point autoPos = auto_.getCenter();
+                float distance = sqrt(pow(vehicle.second.position.x - autoPos.x, 2) + pow(vehicle.second.position.y - autoPos.y, 2));
+                if (distance < 100.0f) { // Wenn Auto näher als 100 Pixel zu Controller-Vehicle
+                    isMatchingVehicle = true;
+                }
+            }
+            
+            if (isMatchingVehicle && vehicle.second.targetNodeId != -1) {
+                // Hole den finalen Zielknoten
+                const PathNode* targetNode = g_path_system->getNode(vehicle.second.targetNodeId);
                 if (targetNode) {
                     Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
                     
-                    // Berechne Vektor zum Ziel
+                    // Berechne Vektor zum finalen Ziel
                     float targetDx = targetPos.x - fullscreenCenter.x;
                     float targetDy = targetPos.y - fullscreenCenter.y;
                     float targetLength = sqrt(targetDx * targetDx + targetDy * targetDy);
@@ -876,7 +886,58 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
                         DeleteObject(targetPen);
                     }
                 }
-                break; // Vehicle gefunden, stoppe Suche
+                
+                // === NEUER ROUTENPFEIL: Zeigt zum nächsten Wegpunkt in der Route ===
+                if (!vehicle.second.currentNodePath.empty() && vehicle.second.currentNodeIndex < vehicle.second.currentNodePath.size()) {
+                    // Hole den nächsten Knoten aus der Route
+                    int currentNodeId = vehicle.second.currentNodePath[vehicle.second.currentNodeIndex];
+                    const PathNode* targetNode = g_path_system->getNode(currentNodeId);
+                    
+                    if (targetNode) {
+                        // In node-based navigation, we navigate directly to the target node
+                        Point vehiclePos = mapToFullscreenCoordinates(vehicle.second.position.x, vehicle.second.position.y);
+                        Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
+                        
+                        // Berechne Vektor zum nächsten Wegpunkt
+                        float routeDx = targetPos.x - fullscreenCenter.x;
+                        float routeDy = targetPos.y - fullscreenCenter.y;
+                        float routeLength = sqrt(routeDx * routeDx + routeDy * routeDy);
+                        
+                        if (routeLength > 10.0f) { // Nur zeichnen wenn Wegpunkt nicht zu nah
+                            routeDx /= routeLength;
+                            routeDy /= routeLength;
+                            
+                            // Zeichne ROUTENPFEIL (grün, mittlere Länge)
+                            HPEN routePen = CreatePen(PS_SOLID, 4, RGB(0, 255, 0)); // Helles Grün
+                            HGDIOBJ oldRoutePen = SelectObject(hdc, routePen);
+                            
+                            float routeArrowLength = 32.0f; // Zwischen Richtungs- und Zielpfeil
+                            float routeEndX = fullscreenCenter.x + routeDx * routeArrowLength;
+                            float routeEndY = fullscreenCenter.y + routeDy * routeArrowLength;
+                            
+                            // Hauptlinie des Routenpfeils
+                            MoveToEx(hdc, static_cast<int>(fullscreenCenter.x), static_cast<int>(fullscreenCenter.y), nullptr);
+                            LineTo(hdc, static_cast<int>(routeEndX), static_cast<int>(routeEndY));
+                            
+                            // Routenpfeil-Spitze
+                            float routeHeadLength = 10.0f;
+                            float routeHeadAngle = 0.45f;
+                            
+                            float routeLeftX = routeEndX - (routeDx * cos(routeHeadAngle) - routeDy * sin(routeHeadAngle)) * routeHeadLength;
+                            float routeLeftY = routeEndY - (routeDx * sin(routeHeadAngle) + routeDy * cos(routeHeadAngle)) * routeHeadLength;
+                            float routeRightX = routeEndX - (routeDx * cos(-routeHeadAngle) - routeDy * sin(-routeHeadAngle)) * routeHeadLength;
+                            float routeRightY = routeEndY - (routeDx * sin(-routeHeadAngle) + routeDy * cos(-routeHeadAngle)) * routeHeadLength;
+                            
+                            MoveToEx(hdc, static_cast<int>(routeEndX), static_cast<int>(routeEndY), nullptr);
+                            LineTo(hdc, static_cast<int>(routeLeftX), static_cast<int>(routeLeftY));
+                            MoveToEx(hdc, static_cast<int>(routeEndX), static_cast<int>(routeEndY), nullptr);
+                            LineTo(hdc, static_cast<int>(routeRightX), static_cast<int>(routeRightY));
+                            
+                            SelectObject(hdc, oldRoutePen);
+                            DeleteObject(routePen);
+                        }
+                    }
+                }
             }
         }
     }
@@ -900,10 +961,10 @@ void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSys
     if (!g_vehicle_controller) return;
 
     // Finde das entsprechende Vehicle im Controller
-    const auto& vehicles = g_vehicle_controller->getVehicles();
+    const auto& vehicles = g_vehicle_controller->getAllVehicles();
     for (const auto& controllerVehicle : vehicles) {
-        if (controllerVehicle.vehicleId == vehicle.getId()) {
-            if (controllerVehicle.currentPath.empty()) continue;
+        if (controllerVehicle.second.vehicleId == vehicle.getId()) {
+            if (controllerVehicle.second.currentNodePath.empty()) continue; // Updated to new logic
 
             // Spezielle Hervorhebung für ausgewähltes Fahrzeug
             COLORREF routeColor;
@@ -927,41 +988,41 @@ void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSys
             HPEN routePen = CreatePen(PS_SOLID, routeWidth, routeColor);
             HGDIOBJ oldPen = SelectObject(hdc, routePen);
 
-            // Zeichne komplette Route vom aktuellen Segment bis zum Ziel
-            for (size_t i = controllerVehicle.currentSegmentIndex; i < controllerVehicle.currentPath.size(); i++) {
-                int segmentId = controllerVehicle.currentPath[i];
-                const PathSegment* segment = pathSystem.getSegment(segmentId);
-
-                if (segment) {
-                    const PathNode* startNode = pathSystem.getNode(segment->startNodeId);
-                    const PathNode* endNode = pathSystem.getNode(segment->endNodeId);
-
-                    if (startNode && endNode) {
-                        // Aktuelles Segment extra hervorheben bei ausgewähltem Fahrzeug
-                        if (i == controllerVehicle.currentSegmentIndex && vehicle.getId() == g_selected_vehicle_id) {
-                            SelectObject(hdc, oldPen);
-                            DeleteObject(routePen);
-                            routePen = CreatePen(PS_SOLID, 16, RGB(255, 100, 255)); // Extra dick und hell
-                            SelectObject(hdc, routePen);
-                        }
-
-                        // Verwende direkte Koordinaten für Vollbild
-                        Point startPos = mapToFullscreenCoordinates(startNode->position.x, startNode->position.y);
-                        Point endPos = mapToFullscreenCoordinates(endNode->position.x, endNode->position.y);
-
-                        MoveToEx(hdc, static_cast<int>(startPos.x), 
-                                static_cast<int>(startPos.y), nullptr);
-                        LineTo(hdc, static_cast<int>(endPos.x), 
-                               static_cast<int>(endPos.y));
-
-                        // Zurück zur normalen Linienbreite nach aktuellem Segment
-                        if (i == controllerVehicle.currentSegmentIndex && vehicle.getId() == g_selected_vehicle_id) {
-                            SelectObject(hdc, oldPen);
-                            DeleteObject(routePen);
-                            routePen = CreatePen(PS_SOLID, routeWidth, routeColor);
-                            SelectObject(hdc, routePen);
-                        }
+            // ROUTE DRAWING - Neue Knoten-basierte Logik
+            Point currentPos = mapToFullscreenCoordinates(vehicle.getCenter().x, vehicle.getCenter().y);
+            
+            // Zeichne Route durch alle Knoten im currentNodePath
+            for (size_t i = controllerVehicle.second.currentNodeIndex; i < controllerVehicle.second.currentNodePath.size(); i++) {
+                int nodeId = controllerVehicle.second.currentNodePath[i];
+                const PathNode* node = pathSystem.getNode(nodeId);
+                
+                if (node) {
+                    Point nodePos = mapToFullscreenCoordinates(node->position.x, node->position.y);
+                    
+                    // Aktueller Wegpunkt extra hervorheben bei ausgewähltem Fahrzeug
+                    if (i == controllerVehicle.second.currentNodeIndex && vehicle.getId() == g_selected_vehicle_id) {
+                        SelectObject(hdc, oldPen);
+                        DeleteObject(routePen);
+                        routePen = CreatePen(PS_SOLID, 16, RGB(255, 100, 255)); // Extra dick und hell
+                        SelectObject(hdc, routePen);
                     }
+                    
+                    // Zeichne Linie von aktueller Position zum Knoten
+                    MoveToEx(hdc, static_cast<int>(currentPos.x), 
+                            static_cast<int>(currentPos.y), nullptr);
+                    LineTo(hdc, static_cast<int>(nodePos.x), 
+                           static_cast<int>(nodePos.y));
+                    
+                    // Zurück zur normalen Linienbreite nach aktuellem Wegpunkt
+                    if (i == controllerVehicle.second.currentNodeIndex && vehicle.getId() == g_selected_vehicle_id) {
+                        SelectObject(hdc, oldPen);
+                        DeleteObject(routePen);
+                        routePen = CreatePen(PS_SOLID, routeWidth, routeColor);
+                        SelectObject(hdc, routePen);
+                    }
+                    
+                    // Aktualisiere Position für nächste Iteration
+                    currentPos = nodePos;
                 }
             }
 
@@ -969,8 +1030,8 @@ void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSys
             DeleteObject(routePen);
 
             // Zeichne Zielknoten extra prominent für ausgewähltes Fahrzeug
-            if (controllerVehicle.targetNodeId != -1) {
-                const PathNode* targetNode = pathSystem.getNode(controllerVehicle.targetNodeId);
+            if (controllerVehicle.second.targetNodeId != -1) {
+                const PathNode* targetNode = pathSystem.getNode(controllerVehicle.second.targetNodeId);
                 if (targetNode) {
                     Point targetPos = mapToFullscreenCoordinates(targetNode->position.x, targetNode->position.y);
 
@@ -1000,10 +1061,94 @@ void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSys
                         SetBkMode(hdc, TRANSPARENT);
                         SetTextColor(hdc, RGB(255, 255, 255));
                         char targetLabel[32];
-                        snprintf(targetLabel, sizeof(targetLabel), "ZIEL: %d", controllerVehicle.targetNodeId);
+                        snprintf(targetLabel, sizeof(targetLabel), "ZIEL: %d", controllerVehicle.second.targetNodeId);
                         TextOutA(hdc, static_cast<int>(targetPos.x + 35), static_cast<int>(targetPos.y - 10), 
                                 targetLabel, strlen(targetLabel));
                     }
+                }
+            }
+
+            // RICHTUNGSPFEIL: Zeichne Pfeil vom Fahrzeug zum nächsten Wegpunkt
+            Point nextTargetPos;
+            bool hasTarget = false;
+            
+            // NEUE LOGIK: Knoten-basierte Navigation
+            if (!controllerVehicle.second.currentNodePath.empty() && controllerVehicle.second.currentNodeIndex < controllerVehicle.second.currentNodePath.size()) {
+                // Zeige zum nächsten Knoten in der Route
+                int nextNodeId = controllerVehicle.second.currentNodePath[controllerVehicle.second.currentNodeIndex];
+                const PathNode* nextNode = pathSystem.getNode(nextNodeId);
+                
+                if (nextNode) {
+                    nextTargetPos = mapToFullscreenCoordinates(nextNode->position.x, nextNode->position.y);
+                    hasTarget = true;
+                    
+                    std::cout << "Drawing arrow for Vehicle " << controllerVehicle.second.vehicleId 
+                              << " to next node " << nextNodeId << " (step " << controllerVehicle.second.currentNodeIndex 
+                              << " of " << controllerVehicle.second.currentNodePath.size() << ")" << std::endl;
+                }
+            } else if (controllerVehicle.second.targetNodeId != -1) {
+                // Keine aktive Route, aber Ziel gesetzt: zeige zum finalen Zielknoten
+                const PathNode* finalTargetNode = pathSystem.getNode(controllerVehicle.second.targetNodeId);
+                if (finalTargetNode) {
+                    nextTargetPos = mapToFullscreenCoordinates(finalTargetNode->position.x, finalTargetNode->position.y);
+                    Point vehiclePos = vehicle.getCenter();
+                    float distanceToFinalTarget = vehiclePos.distanceTo(nextTargetPos);
+                    
+                    // Nur zeigen wenn noch nicht am finalen Ziel angekommen
+                    if (distanceToFinalTarget > 40.0f) {
+                        hasTarget = true;
+                    }
+                }
+            }
+            
+            if (hasTarget) {
+                Point vehiclePos = vehicle.getCenter();
+                
+                // Berechne Richtungsvektor
+                float dx = nextTargetPos.x - vehiclePos.x;
+                float dy = nextTargetPos.y - vehiclePos.y;
+                float length = sqrt(dx*dx + dy*dy);
+                
+                if (length > 10.0f) { // Nur zeichnen wenn nächster Punkt weit genug weg ist
+                    // Normalisiere Richtung
+                    dx /= length;
+                    dy /= length;
+                    
+                    // Pfeil-Parameter
+                    float arrowLength = 80.0f;  // Länge des Pfeils
+                    float arrowHeadSize = 20.0f; // Größe der Pfeilspitze
+                    
+                    // Pfeil-Ende-Position
+                    Point arrowEnd;
+                    arrowEnd.x = vehiclePos.x + dx * arrowLength;
+                    arrowEnd.y = vehiclePos.y + dy * arrowLength;
+                    
+                    // Zeichne Pfeil-Linie (dick und gut sichtbar)
+                    HPEN arrowPen = CreatePen(PS_SOLID, 6, RGB(0, 255, 255)); // Cyan für gute Sichtbarkeit
+                    HGDIOBJ oldArrowPen = SelectObject(hdc, arrowPen);
+                            
+                    MoveToEx(hdc, static_cast<int>(vehiclePos.x), static_cast<int>(vehiclePos.y), nullptr);
+                    LineTo(hdc, static_cast<int>(arrowEnd.x), static_cast<int>(arrowEnd.y));
+                    
+                    // Zeichne Pfeilspitze
+                    float headAngle = 0.5f; // Winkel der Pfeilspitze
+                    Point head1, head2;
+                    
+                    head1.x = arrowEnd.x - dx * arrowHeadSize * cos(headAngle) + dy * arrowHeadSize * sin(headAngle);
+                    head1.y = arrowEnd.y - dy * arrowHeadSize * cos(headAngle) - dx * arrowHeadSize * sin(headAngle);
+                    
+                    head2.x = arrowEnd.x - dx * arrowHeadSize * cos(headAngle) - dy * arrowHeadSize * sin(headAngle);
+                    head2.y = arrowEnd.y - dy * arrowHeadSize * cos(headAngle) + dx * arrowHeadSize * sin(headAngle);
+                    
+                    // Zeichne Pfeilspitze-Linien
+                    MoveToEx(hdc, static_cast<int>(arrowEnd.x), static_cast<int>(arrowEnd.y), nullptr);
+                    LineTo(hdc, static_cast<int>(head1.x), static_cast<int>(head1.y));
+                    
+                    MoveToEx(hdc, static_cast<int>(arrowEnd.x), static_cast<int>(arrowEnd.y), nullptr);
+                    LineTo(hdc, static_cast<int>(head2.x), static_cast<int>(head2.y));
+                    
+                    SelectObject(hdc, oldArrowPen);
+                    DeleteObject(arrowPen);
                 }
             }
             break;

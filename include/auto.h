@@ -54,9 +54,9 @@ public:
     int targetNodeId;
     int pendingTargetNodeId;
     
-    // Path following
-    std::vector<int> currentPath;
-    size_t currentSegmentIndex;
+    // Path following - NEUE LOGIK: Liste von Knoten-IDs (nicht Segmente)
+    std::vector<int> currentNodePath;    // Route als Liste von Knoten-IDs
+    size_t currentNodeIndex;             // Index des aktuellen Zielknotens in der Route
     
     // State management
     VehicleState state;
@@ -67,6 +67,10 @@ public:
     bool isMoving;
     bool isWaitingInQueue;
     int currentSegmentId;
+    
+    // Real-world integration
+    Point realWorldCoordinates;    // Position from camera detection
+    std::string colorValue;        // Vehicle color for identification
 
     // Position and movement methods
     void setPosition(const Point& pos);

@@ -150,7 +150,7 @@ void Renderer::drawVehiclePaths(const std::vector<Auto>& vehicles, const PathSys
 
     for (size_t i = 0; i < vehicles.size(); i++) {
         const Auto& vehicle = vehicles[i];
-        if (!vehicle.currentPath.empty() && vehicle.targetNodeId != -1) {
+        if (!vehicle.currentNodePath.empty() && vehicle.targetNodeId != -1) {
             Color pathColor = pathColors[i % colorCount];
             drawSingleVehiclePath(vehicle, pathSystem, pathColor);
         }
@@ -158,91 +158,43 @@ void Renderer::drawVehiclePaths(const std::vector<Auto>& vehicles, const PathSys
 }
 
 void Renderer::drawSingleVehiclePath(const Auto& vehicle, const PathSystem& pathSystem, Color pathColor) {
-    if (vehicle.currentPath.empty()) return;
+    // Draw path from current node to target nodes
+    if (vehicle.currentNodePath.empty()) return;
 
-    // Start from vehicle's current position
     Point currentPos = vehicle.position;
+    
+    // Draw lines between consecutive nodes in the path
+    for (size_t i = vehicle.currentNodeIndex; i < vehicle.currentNodePath.size(); i++) {
+        int nodeId = vehicle.currentNodePath[i];
+        const PathNode* node = pathSystem.getNode(nodeId);
+        if (!node) continue;
 
-    // Draw line to first node in path if vehicle is not on a node
-    if (vehicle.currentNodeId != -1) {
-        const PathNode* currentNode = pathSystem.getNode(vehicle.currentNodeId);
-        if (currentNode) {
-            float distanceToNode = currentPos.distanceTo(currentNode->position);
-            if (distanceToNode > 10.0f) {
-                // Draw dashed line to current node
-                DrawLineEx({currentPos.x, currentPos.y}, 
-                          {currentNode->position.x, currentNode->position.y}, 
-                          3.0f, ColorAlpha(pathColor, 0.7f));
-            }
-            currentPos = currentNode->position;
-        }
-    }
+        Point nodePos = node->position;
+        
+        // Determine thickness and color based on whether it's current or future
+        float thickness = (i == vehicle.currentNodeIndex) ? 5.0f : 3.0f;
+        Color segmentColor = (i == vehicle.currentNodeIndex) ? pathColor : ColorAlpha(pathColor, 0.6f);
 
-    // Draw path segments
-    for (size_t i = vehicle.currentSegmentIndex; i < vehicle.currentPath.size(); i++) {
-        int segmentId = vehicle.currentPath[i];
-        const PathSegment* segment = pathSystem.getSegment(segmentId);
-        if (!segment) continue;
-
-        const PathNode* startNode = pathSystem.getNode(segment->startNodeId);
-        const PathNode* endNode = pathSystem.getNode(segment->endNodeId);
-        if (!startNode || !endNode) continue;
-
-        // Determine which direction we're traversing this segment
-        Point segmentStart, segmentEnd;
-        if (i == vehicle.currentSegmentIndex) {
-            // For current segment, start from current position
-            segmentStart = currentPos;
-            // Determine if we're going from start to end or end to start
-            float distToStart = currentPos.distanceTo(startNode->position);
-            float distToEnd = currentPos.distanceTo(endNode->position);
-            segmentEnd = (distToStart < distToEnd) ? endNode->position : startNode->position;
-        } else {
-            // For future segments, determine direction based on previous segment
-            const PathSegment* prevSegment = pathSystem.getSegment(vehicle.currentPath[i-1]);
-            if (prevSegment) {
-                // Connect segments properly
-                if (prevSegment->endNodeId == segment->startNodeId) {
-                    segmentStart = startNode->position;
-                    segmentEnd = endNode->position;
-                } else if (prevSegment->endNodeId == segment->endNodeId) {
-                    segmentStart = endNode->position;
-                    segmentEnd = startNode->position;
-                } else if (prevSegment->startNodeId == segment->startNodeId) {
-                    segmentStart = startNode->position;
-                    segmentEnd = endNode->position;
-                } else {
-                    segmentStart = endNode->position;
-                    segmentEnd = startNode->position;
-                }
-            } else {
-                segmentStart = startNode->position;
-                segmentEnd = endNode->position;
-            }
-        }
-
-        // Draw the path segment with thickness indicating priority
-        float thickness = (i == vehicle.currentSegmentIndex) ? 5.0f : 3.0f;
-        Color segmentColor = (i == vehicle.currentSegmentIndex) ? pathColor : ColorAlpha(pathColor, 0.6f);
-
-        DrawLineEx({segmentStart.x, segmentStart.y}, 
-                  {segmentEnd.x, segmentEnd.y}, 
+        // Draw line from current position to this node
+        DrawLineEx({currentPos.x, currentPos.y}, 
+                  {nodePos.x, nodePos.y}, 
                   thickness, segmentColor);
 
         // Draw arrow to show direction
-        Point direction = segmentEnd - segmentStart;
-        float length = segmentStart.distanceTo(segmentEnd);
-        if (length > 0) {
+        Point direction = nodePos - currentPos;
+        float length = currentPos.distanceTo(nodePos);
+        if (length > 10.0f) { // Only draw arrow if segment is long enough
             Point normalizedDir = direction * (1.0f / length);
-            Point arrowPos = segmentStart + normalizedDir * (length * 0.7f);
-            Point arrowEnd = segmentStart + normalizedDir * (length * 0.9f);
+            Point arrowPos = currentPos + normalizedDir * (length * 0.7f);
+            Point arrowEnd = currentPos + normalizedDir * (length * 0.9f);
 
             DrawLineEx({arrowPos.x, arrowPos.y}, 
                       {arrowEnd.x, arrowEnd.y}, 
                       thickness + 1.0f, pathColor);
         }
 
-        currentPos = segmentEnd;
+        // Update current position for next iteration
+        currentPos = nodePos;
     }
 
     // Draw target indicator

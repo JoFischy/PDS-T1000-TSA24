@@ -181,7 +181,7 @@ void CarSimulation::renderCars() {
 }
 
 void CarSimulation::renderUI() {
-    // Render nur Hintergrund im Hauptfenster - KEINE Pfade, Routen oder Autos!
+    // Render nur Hintergrund im Hauptfenster - Routen werden in Windows API gezeichnet
     if (renderer) {
         renderer->renderBackgroundOnly();
     }
@@ -482,10 +482,13 @@ void CarSimulation::handleVehicleSelection() {
 void CarSimulation::handleTargetAssignment() {
     if (!pathSystemInitialized || !vehicleController || selectedVehicle < 0) return;
 
-    const auto& vehicles = vehicleController->getVehicles();
+    const auto& vehicles = vehicleController->getAllVehicles();
     if (static_cast<size_t>(selectedVehicle) >= vehicles.size()) return;
 
-    int vehicleId = vehicles[selectedVehicle].vehicleId;
+    auto it = vehicles.find(selectedVehicle);
+    if (it == vehicles.end()) return;
+    
+    int vehicleId = it->second.vehicleId;
 
     // Mouse click on node for target selection
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {

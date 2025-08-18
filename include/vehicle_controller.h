@@ -34,7 +34,7 @@ public:
     const Auto* getVehicle(int vehicleId) const;
 
     // Smart target assignment
-    void setVehicleTargetNode(int vehicleId, int targetNodeId);
+    bool setVehicleTargetNode(int vehicleId, int targetNodeId);  // Changed to bool return
     void assignNewRandomTarget(int vehicleId);
     bool isVehicleAtTarget(int vehicleId) const;
 
@@ -85,9 +85,13 @@ public:
     void syncRealVehiclesWithSystem(const std::vector<Auto>& detectedAutos);
 
     // Getters
-    const std::vector<Auto>& getVehicles() const { return vehicles; }
+    const std::unordered_map<int, Auto>& getAllVehicles() const { return vehicles; }
     size_t getVehicleCount() const { return vehicles.size(); }
     const PathSystem* getPathSystem() const { return pathSystem; }
+    
+    // Additional utility functions
+    std::string getVehicleStateString(VehicleState state) const;
+    std::vector<int> getActiveVehicleIds() const;
 
 private:
     void updateVehicleMovement(Auto& vehicle, float deltaTime);
@@ -129,8 +133,7 @@ private:
 
     PathSystem* pathSystem;
     SegmentManager* segmentManager;
-    std::vector<Auto> vehicles;
-    std::unordered_map<int, size_t> vehicleIdToIndex;
+    std::unordered_map<int, Auto> vehicles;  // Changed from vector to unordered_map
     std::unordered_map<std::string, int> colorToVehicleId; // Map vehicle colors to IDs
     int nextVehicleId;
 };

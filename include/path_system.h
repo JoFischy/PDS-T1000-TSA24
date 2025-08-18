@@ -62,6 +62,9 @@ public:
     size_t getNodeCount() const { return nodes.size(); }
     size_t getSegmentCount() const { return segments.size(); }
     
+    // Public utility functions
+    float calculateDistance(const Point& a, const Point& b) const;
+    
 private:
     std::vector<PathNode> nodes;
     std::vector<PathSegment> segments;
@@ -71,5 +74,4 @@ private:
     int nextSegmentId;
     
     void connectNodeToSegment(int nodeId, int segmentId);
-    float calculateDistance(const Point& a, const Point& b) const;
 };

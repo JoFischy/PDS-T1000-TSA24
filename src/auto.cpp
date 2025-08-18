@@ -3,6 +3,7 @@
 #include "auto.h"
 #include <cmath>
 #include <string>
+#include <iostream>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -12,13 +13,13 @@ int Auto::nextId = 1;
 
 // Original detection-based constructors
 Auto::Auto() : direction(0.0f), valid(false), id(0), vehicleId(0), currentNodeId(-1), targetNodeId(-1), 
-               pendingTargetNodeId(-1), currentSegmentIndex(0), state(VehicleState::IDLE), 
+               pendingTargetNodeId(-1), currentNodeIndex(0), state(VehicleState::IDLE), 
                currentDirection(Direction::NORTH), speed(50.0f), isMoving(false), isWaitingInQueue(false),
                currentSegmentId(-1) {}
 
 Auto::Auto(const Point& idPoint, const Point& fPoint) 
     : identificationPoint(idPoint), frontPoint(fPoint), valid(true), vehicleId(0), currentNodeId(-1), 
-      targetNodeId(-1), pendingTargetNodeId(-1), currentSegmentIndex(0), state(VehicleState::IDLE),
+      targetNodeId(-1), pendingTargetNodeId(-1), currentNodeIndex(0), state(VehicleState::IDLE),
       currentDirection(Direction::NORTH), speed(50.0f), isMoving(false), isWaitingInQueue(false),
       currentSegmentId(-1) {
     id = extractIdFromColor(idPoint.color);
@@ -29,14 +30,14 @@ Auto::Auto(const Point& idPoint, const Point& fPoint)
 Auto::Auto(int id, const Point& startPos) 
     : identificationPoint(startPos), frontPoint(startPos), center(startPos), direction(0.0f), valid(true), id(id),
       vehicleId(id), position(startPos), targetPosition(startPos), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
-      currentSegmentIndex(0), state(VehicleState::IDLE), currentDirection(Direction::NORTH), speed(50.0f),
+      currentNodeIndex(0), state(VehicleState::IDLE), currentDirection(Direction::NORTH), speed(50.0f),
       isMoving(false), isWaitingInQueue(false), currentSegmentId(-1) {
 }
 
 Auto::Auto(const Point& startPos, Direction dir) 
     : identificationPoint(startPos), frontPoint(startPos), center(startPos), direction(0.0f), valid(true), id(nextId++),
       vehicleId(id), position(startPos), targetPosition(startPos), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
-      currentSegmentIndex(0), state(VehicleState::IDLE), currentDirection(dir), speed(50.0f),
+      currentNodeIndex(0), state(VehicleState::IDLE), currentDirection(dir), speed(50.0f),
       isMoving(false), isWaitingInQueue(false), currentSegmentId(-1) {
     center = startPos;
     direction = static_cast<float>(dir);
@@ -69,11 +70,16 @@ int Auto::extractIdFromColor(const std::string& color) {
     // Extract number from color string like "Heck1", "Heck2", etc.
     if (color.find("Heck") == 0 && color.length() > 4) {
         try {
-            return std::stoi(color.substr(4)); // Extract number after "Heck"
+            std::string numberPart = color.substr(4); // Extract everything after "Heck"
+            int extractedId = std::stoi(numberPart); // Extract number after "Heck"
+            std::cout << "DEBUG: extractIdFromColor('" << color << "') -> ID=" << extractedId << std::endl;
+            return extractedId;
         } catch (...) {
+            std::cout << "DEBUG: extractIdFromColor('" << color << "') -> PARSE FAILED, defaulting to 0" << std::endl;
             return 0; // Default if parsing fails
         }
     }
+    std::cout << "DEBUG: extractIdFromColor('" << color << "') -> NOT HECK COLOR, defaulting to 0" << std::endl;
     return 0; // Default for unknown colors
 }
 
