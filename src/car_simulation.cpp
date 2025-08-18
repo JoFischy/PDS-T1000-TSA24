@@ -1,262 +1,197 @@
-#include "../include/car_simulation.h"
-#include "../include/Vehicle.h"
+#include "car_simulation.h"
+#include "point.h"
+#include "auto.h"
+#include "renderer.h"
+#include "py_runner.h"
+#include "coordinate_filter_fast.h"
+#include "test_window.h"
 #include <algorithm>
-#include <limits>
-#include <cstdio>
+#include <cmath>
+#include <iostream>
 
-#ifndef M_PI
-#define M_PI PI
-#endif
+#define DEFAULT_CAR_POINT_DISTANCE 25.0f
+#define DISTANCE_BUFFER 8.0f
 
-// Implementation of FieldTransform::calculate method
-void FieldTransform::calculate(int window_width, int window_height) {
-    // GESAMTE Fensterfläche nutzen - KEIN UI_HEIGHT Abzug mehr!
-    int available_width = window_width;
-    int available_height = window_height;  // Komplett ohne UI-Abzug
-    
-    // Berechne Anzahl quadratischer Felder die reinpassen
-    field_cols = available_width / FIELD_SIZE;
-    field_rows = available_height / FIELD_SIZE;
-    
-    // Tatsächliche Spielfeld-Dimensionen = GESAMTE Fensterfläche
-    field_width = window_width;   // Komplette Breite
-    field_height = window_height; // Komplette Höhe
-    
-    // Kein Offset - nutze die gesamte Fläche
-    offset_x = 0;
-    offset_y = 0;
-}
-
-CarSimulation::CarSimulation() : time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE), distance_buffer(DISTANCE_BUFFER), 
-                                 is_fullscreen(false), windowed_width(WINDOW_WIDTH), windowed_height(WINDOW_HEIGHT), 
-                                 windowed_pos_x(100), windowed_pos_y(100) {
-    // Calculate scaling factors to fit the field in the window
-    scale_x = (float)(WINDOW_WIDTH - 200) / FIELD_WIDTH;  // Leave space for UI
-    scale_y = (float)(WINDOW_HEIGHT - 100) / FIELD_HEIGHT; // Leave space for UI
-    
-    // Use the smaller scale to maintain aspect ratio
-    float scale = std::min(scale_x, scale_y);
-    scale_x = scale_y = scale;
-    
-    // Calculate offset to center the field
-    field_offset.x = (WINDOW_WIDTH - FIELD_WIDTH * scale_x) / 2;
-    field_offset.y = 50; // Leave space at top for text
+CarSimulation::CarSimulation() : tolerance(250.0f), time_elapsed(0.0f), car_point_distance(DEFAULT_CAR_POINT_DISTANCE),
+                                 distance_buffer(DISTANCE_BUFFER), segmentManager(nullptr), vehicleController(nullptr),
+                                 pathSystemInitialized(false), selectedVehicle(-1) {
+    renderer = nullptr;
+    // Verwende den schnellen Filter für minimale Verzögerung
+    fastFilter = createFastCoordinateFilter();
 }
 
 CarSimulation::~CarSimulation() {
-    // Don't close window here, it's managed by main
+    if (renderer) {
+        delete renderer;
+    }
+    if (vehicleController) {
+        delete vehicleController;
+    }
+    if (segmentManager) {
+        delete segmentManager;
+    }
 }
 
 void CarSimulation::initialize() {
-    // Don't initialize window here, it's managed by main
-    cars.resize(NUM_CARS);
+    // Initialize renderer with current screen size
+    int currentWidth = GetScreenWidth();
+    int currentHeight = GetScreenHeight();
+    renderer = new Renderer(currentWidth, currentHeight);
+    renderer->initialize();
+
+    // Initialize path system
+    initializePathSystem();
 }
 
 void CarSimulation::updateFromDetectedObjects(const std::vector<DetectedObject>& detected_objects, const FieldTransform& field_transform) {
-    // Clear previous points
-    front_points.clear();
-    identification_points.clear();
+    // ULTRA-SCHNELLE VERARBEITUNG: Minimale Zwischenschritte
+    std::vector<Point> rawPoints;
+    rawPoints.reserve(detected_objects.size()); // Verhindere Reallocations
     
-    // Convert detected objects to simulation points mit direkten Pixel-Koordinaten
-    for (size_t i = 0; i < detected_objects.size(); i++) {
-        const auto& obj = detected_objects[i];
-        
-        // Convert to window pixel coordinates for fullscreen display
-        float window_x, window_y;
-        cameraToWindow(obj, field_transform, window_x, window_y);
-        
-        if (obj.color == "Front") {
-            front_points.emplace_back((int)window_x, (int)window_y, true, i);
-        } else if (obj.color.find("Heck") == 0) {
-            // Extract number from "Heck1", "Heck2", etc.
-            int heck_id = 0;
-            if (obj.color.length() > 4) {
-                heck_id = obj.color[4] - '1'; // Convert "1", "2", etc. to 0, 1, etc.
-            }
-            identification_points.emplace_back((int)window_x, (int)window_y, false, heck_id);
-        }
-    }
-}
+    std::vector<std::string> colors;
+    colors.reserve(detected_objects.size());
 
-// Helper function für Koordinatenumrechnung - gesamte Fläche = Crop-Bereich
-void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y) {
-    if (obj.crop_width <= 0 || obj.crop_height <= 0) {
-        window_x = window_y = 0;
-        return;
-    }
-    
-    // Normalisiere Kamera-Koordinaten (0.0 bis 1.0)
-    float norm_x = obj.coordinates.x / obj.crop_width;
-    float norm_y = obj.coordinates.y / obj.crop_height;
-    
-    // Mappe direkt auf die gesamte Fensterfläche (gesamte Fläche = Crop-Bereich)
-    window_x = norm_x * transform.field_width;
-    window_y = norm_y * transform.field_height;
-}
+    // Optimierte Schleife mit KALIBRIERTER Koordinaten-Transformation
+    for (const auto& obj : detected_objects) {
+        // Verwende kalibrierte Transformation aus test_window.cpp
+        if (obj.crop_width > 0 && obj.crop_height > 0) {
+            float window_x, window_y;
+            getCalibratedTransform(obj.coordinates.x, obj.coordinates.y, 
+                                 obj.crop_width, obj.crop_height, 
+                                 window_x, window_y);
 
-void CarSimulation::cameraToField(const DetectedObject& obj, const FieldTransform& transform, int& field_col, int& field_row) {
-    if (obj.crop_width <= 0 || obj.crop_height <= 0) {
-        field_col = field_row = 0;
-        return;
-    }
-    
-    // Normalisiere Kamera-Koordinaten (0.0 bis 1.0)
-    float norm_x = obj.coordinates.x / obj.crop_width;
-    float norm_y = obj.coordinates.y / obj.crop_height;
-    
-    // Mappe auf Spielfeld-Spalten/Zeilen (ganze Zahlen)
-    field_col = (int)(norm_x * transform.field_cols);
-    field_row = (int)(norm_y * transform.field_rows);
-    
-    // Begrenze auf Spielfeld
-    field_col = std::max(0, std::min(field_col, transform.field_cols - 1));
-    field_row = std::max(0, std::min(field_row, transform.field_rows - 1));
-}
-
-void CarSimulation::pairPointsToCars() {
-    stablePairPointsToCars();
-}
-
-void CarSimulation::stablePairPointsToCars() {
-    // First, check if existing stable pairs are still valid
-    for (auto& car : cars) {
-        if (car.front_point && car.identification_point && car.is_stable) {
-            // Check if both points are still valid
-            if (car.front_point->is_valid && car.identification_point->is_valid) {
-                float current_distance = calculateDistance(*car.front_point, *car.identification_point);
-                
-                // Check if distance is within acceptable range (configurable distance +/- buffer)
-                float min_distance = car_point_distance - distance_buffer;
-                float max_distance = car_point_distance + distance_buffer;
-                
-                if (current_distance >= min_distance && current_distance <= max_distance) {
-                    // Pair is still valid, update last known distance
-                    car.last_distance = current_distance;
-                    continue;
-                }
-            }
-            
-            // Pair is no longer valid, mark as unstable
-            car.is_stable = false;
-        }
-    }
-    
-    // Track which points have been assigned to stable cars
-    std::vector<bool> front_assigned(front_points.size(), false);
-    std::vector<bool> id_assigned(identification_points.size(), false);
-    
-    // Mark points assigned to stable cars
-    for (const auto& car : cars) {
-        if (car.is_stable && car.front_point && car.identification_point) {
-            for (size_t i = 0; i < front_points.size(); i++) {
-                if (car.front_point == &front_points[i]) {
-                    front_assigned[i] = true;
-                    break;
-                }
-            }
-            for (size_t i = 0; i < identification_points.size(); i++) {
-                if (car.identification_point == &identification_points[i]) {
-                    id_assigned[i] = true;
-                    break;
-                }
+            if (obj.color == "Front") {
+                rawPoints.emplace_back(window_x, window_y, PointType::FRONT, obj.color);
+                colors.push_back(obj.color);
+            } else if (obj.color.find("Heck") == 0) {
+                rawPoints.emplace_back(window_x, window_y, PointType::IDENTIFICATION, obj.color);
+                colors.push_back(obj.color);
             }
         }
     }
+
+    // DIREKTER DURCHGANG - Kein Filter für maximale Geschwindigkeit
+    points = std::move(rawPoints); // Move semantics für Performance
     
-    // Find new pairs for unstable cars
-    for (auto& car : cars) {
-        if (!car.is_stable) {
-            float min_distance = std::numeric_limits<float>::max();
-            int best_front = -1;
-            int best_id = -1;
-            
-            // Find the closest unassigned valid points within distance range
-            for (size_t f = 0; f < front_points.size(); f++) {
-                if (front_assigned[f] || !front_points[f].is_valid) continue;
-                
-                for (size_t i = 0; i < identification_points.size(); i++) {
-                    if (id_assigned[i] || !identification_points[i].is_valid) continue;
-                    
-                    float distance = calculateDistance(front_points[f], identification_points[i]);
-                    
-                    // Only consider pairs within the expected distance range
-                    float min_expected = car_point_distance - distance_buffer;
-                    float max_expected = car_point_distance + distance_buffer;
-                    
-                    if (distance >= min_expected && distance <= max_expected && distance < min_distance) {
-                        min_distance = distance;
-                        best_front = f;
-                        best_id = i;
-                    }
-                }
-            }
-            
-            // Assign the best pair to this car
-            if (best_front != -1 && best_id != -1) {
-                car.front_point = &front_points[best_front];
-                car.identification_point = &identification_points[best_id];
-                car.last_distance = min_distance;
-                car.is_stable = true;
-                car.car_id = identification_points[best_id].id;
-                
-                front_assigned[best_front] = true;
-                id_assigned[best_id] = true;
-            } else {
-                // No suitable pair found, keep previous assignment if points are still valid
-                if (car.front_point && !car.front_point->is_valid) {
-                    car.front_point = nullptr;
-                }
-                if (car.identification_point && !car.identification_point->is_valid) {
-                    car.identification_point = nullptr;
-                }
-            }
+    // Sofortige Fahrzeugerkennung
+    detectVehicles();
+
+    // Update test window with detected objects and vehicles
+    std::vector<DetectedObject> detectedObjForWindow;
+    for (const auto& point : points) {
+        DetectedObject obj;
+        obj.coordinates.x = point.x;
+        obj.coordinates.y = point.y;
+        obj.color = point.color;
+        detectedObjForWindow.push_back(obj);
+    }
+    updateTestWindowCoordinates(detectedObjForWindow);
+
+    // Update vehicle commands in JSON (extern function from test_window.cpp)
+    extern void updateVehicleCommands();
+    if (!detectedAutos.empty()) {
+        updateVehicleCommands();
+    }
+}
+
+void CarSimulation::detectVehicles() {
+    detectedAutos.clear();
+
+    // Create vectors to separate identification and front points
+    std::vector<size_t> identificationIndices;
+    std::vector<size_t> frontIndices;
+
+    for (size_t i = 0; i < points.size(); i++) {
+        if (points[i].type == PointType::IDENTIFICATION) {
+            identificationIndices.push_back(i);
+        } else if (points[i].type == PointType::FRONT) {
+            frontIndices.push_back(i);
         }
     }
-}
 
-void CarSimulation::calculateCarDirections() {
-    for (auto& car : cars) {
-        if (car.front_point && car.identification_point) {
-            car.direction = calculateAngle(*car.identification_point, *car.front_point);
+    // Track which front points have already been used
+    std::vector<bool> frontPointUsed(frontIndices.size(), false);
+
+    // For each identification point, find the closest available front point within tolerance
+    for (size_t idIdx : identificationIndices) {
+        float bestDistance = tolerance + 1.0f;  // Start with distance greater than tolerance
+        int bestFrontIdx = -1;
+        int bestFrontVectorIdx = -1;
+
+        // Check all front points
+        for (size_t j = 0; j < frontIndices.size(); j++) {
+            if (frontPointUsed[j]) continue;  // Skip already used front points
+
+            size_t frontIdx = frontIndices[j];
+            float distance = points[idIdx].distanceTo(points[frontIdx]);
+
+            // If this front point is closer and within tolerance
+            if (distance <= tolerance && distance < bestDistance) {
+                bestDistance = distance;
+                bestFrontIdx = frontIdx;
+                bestFrontVectorIdx = j;
+            }
+        }
+
+        // If we found a suitable front point, create a vehicle
+        if (bestFrontIdx != -1) {
+            detectedAutos.emplace_back(points[idIdx], points[bestFrontIdx]);
+            frontPointUsed[bestFrontVectorIdx] = true;  // Mark this front point as used
         }
     }
-}
 
-float CarSimulation::calculateDistance(const Point& p1, const Point& p2) {
-    float dx = p1.x - p2.x;
-    float dy = p1.y - p2.y;
-    return sqrt(dx * dx + dy * dy);
-}
-
-int CarSimulation::calculateAngle(const Point& from, const Point& to) {
-    float dx = to.x - from.x;
-    float dy = to.y - from.y;
-    
-    // Calculate angle in radians, then convert to degrees
-    float angle_rad = atan2(dx, -dy); // -dy because Y increases downward in screen coordinates
-    float angle_deg = angle_rad * 180.0f / M_PI;
-    
-    // Normalize to 0-360 degrees
-    if (angle_deg < 0) {
-        angle_deg += 360.0f;
-    }
-    
-    return (int)(angle_deg + 0.5f); // Round to nearest integer
+    // Update test window with detected vehicles
+    updateTestWindowVehicles(detectedAutos);
 }
 
 void CarSimulation::update(float deltaTime) {
     time_elapsed += deltaTime;
-    pairPointsToCars();
-    calculateCarDirections();
+
+    // Update tolerance with +/- keys for debugging
+    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) {
+        tolerance += 10.0f;
+        if (tolerance > 300.0f) tolerance = 300.0f;
+    }
+
+    if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) {
+        tolerance -= 10.0f;
+        if (tolerance < 10.0f) tolerance = 10.0f;
+    }
+
+    // Handle vehicle selection and target assignment
+    handleVehicleSelection();
+    handleTargetAssignment();
+
+    // Update path system vehicles
+    if (pathSystemInitialized && vehicleController) {
+        // Sync detected vehicles with path system
+        syncDetectedVehiclesWithPathSystem();
+
+        // Update vehicle movement along paths
+        vehicleController->updateVehicles(deltaTime);
+    }
+}
+
+void CarSimulation::renderPoints() {
+    // Points are rendered by the renderer
+}
+
+void CarSimulation::renderCars() {
+    // Cars are rendered by the renderer
+}
+
+void CarSimulation::renderUI() {
+    // Render nur Hintergrund im Hauptfenster - KEINE Pfade, Routen oder Autos!
+    if (renderer) {
+        renderer->renderBackgroundOnly();
+    }
 }
 
 void CarSimulation::renderField() {
-    // Keine Spielfeld-Rahmen mehr - gesamte weiße Fläche = Crop-Bereich
-    // Optional: Raster für Orientierung (sehr dezent)
+    // Optional: Very subtle grid for orientation
     int currentWidth = GetScreenWidth();
     int currentHeight = GetScreenHeight();
-    
-    // Sehr dezentes Raster alle 100 Pixel
+
     for (int x = 0; x < currentWidth; x += 100) {
         DrawLine(x, 0, x, currentHeight, LIGHTGRAY);
     }
@@ -265,190 +200,336 @@ void CarSimulation::renderField() {
     }
 }
 
-void CarSimulation::renderPoints() {
-    // Render front points (große rote Kreise auf weißem Hintergrund)
-    for (const auto& point : front_points) {
-        if (point.is_valid) {
-            Vector2 screen_pos = { (float)point.x, (float)point.y };
-            DrawCircleV(screen_pos, 12, RED);
-            DrawCircleLinesV(screen_pos, 12, MAROON);
-            DrawText(TextFormat("FRONT-%d", point.id), screen_pos.x + 15, screen_pos.y - 15, 18, MAROON);
-        }
+void CarSimulation::cameraToWindow(const DetectedObject& obj, const FieldTransform& transform, float& window_x, float& window_y) {
+    if (obj.crop_width <= 0 || obj.crop_height <= 0) {
+        std::cout << "ERROR: Invalid crop dimensions: " << obj.crop_width << "x" << obj.crop_height << std::endl;
+        window_x = window_y = 0;
+        return;
     }
-    
-    // Render identification points (große blaue Quadrate auf weißem Hintergrund)
-    for (const auto& point : identification_points) {
-        if (point.is_valid) {
-            Vector2 screen_pos = { (float)point.x, (float)point.y };
-            DrawRectangle(screen_pos.x - 8, screen_pos.y - 8, 16, 16, BLUE);
-            DrawRectangleLinesEx({screen_pos.x - 8, screen_pos.y - 8, 16, 16}, 2, DARKBLUE);
-            DrawText(TextFormat("HECK-%d", point.id), screen_pos.x + 15, screen_pos.y - 15, 18, DARKBLUE);
+
+    // Debug-Ausgabe für eingehende Daten
+    std::cout << "cameraToWindow Input: obj(" << obj.coordinates.x << ", " << obj.coordinates.y 
+              << ") crop(" << obj.crop_width << ", " << obj.crop_height << ")" << std::endl;
+
+    // Die Python-Koordinaten sind bereits Pixel-Koordinaten im Crop-Bereich (nicht normalisiert!)
+    // obj.coordinates.x und obj.coordinates.y sind bereits die Pixel-Positionen (z.B. 150, 200)
+    // Wir müssen sie erst normalisieren (0.0 bis 1.0)
+    float norm_x = obj.coordinates.x / obj.crop_width;
+    float norm_y = obj.coordinates.y / obj.crop_height;
+
+    // Map to entire window area (1920x1200 fullscreen)
+    window_x = norm_x * transform.field_width;
+    window_y = norm_y * transform.field_height;
+
+    // Debug-Ausgabe für transformierte Koordinaten
+    std::cout << "cameraToWindow Output: norm(" << norm_x << ", " << norm_y 
+              << ") -> window(" << window_x << ", " << window_y << ")" << std::endl;
+}
+
+void CarSimulation::setCarPointDistance(float distance) {
+    car_point_distance = distance;
+}
+
+void CarSimulation::setDistanceBuffer(float buffer) {
+    distance_buffer = buffer;
+}
+
+// Implementation of FieldTransform::calculate method
+void FieldTransform::calculate(int window_width, int window_height) {
+    // UTILIZE THE ENTIRE WINDOW AREA - NO MORE UI_HEIGHT SUBTRACTION!
+    int available_width = window_width;
+    int available_height = window_height;  // Completely without UI subtraction
+
+    // Calculate the number of square fields that fit
+    field_cols = available_width / FIELD_SIZE;
+    field_rows = available_height / FIELD_SIZE;
+
+    // Actual field dimensions = ENTIRE window area
+    field_width = window_width;   // Complete width
+    field_height = window_height; // Complete height
+
+    // No offset - use the entire area
+    offset_x = 0;
+    offset_y = 0;
+}
+
+void CarSimulation::initializePathSystem() {
+    if (pathSystemInitialized) return;
+
+    // Create factory path system
+    createFactoryPathSystem();
+
+    // Initialize segment manager
+    segmentManager = new SegmentManager(&pathSystem);
+
+    // Initialize vehicle controller
+    vehicleController = new VehicleController(&pathSystem, segmentManager);
+
+    pathSystemInitialized = true;
+
+    // WICHTIG: Setze PathSystem-Referenzen für das Test-Fenster
+    ::setTestWindowPathSystem(&pathSystem, vehicleController);
+
+    std::cout << "Path system initialized with " << pathSystem.getNodeCount()
+              << " nodes and " << pathSystem.getSegmentCount() << " segments" << std::endl;
+}
+
+void CarSimulation::createFactoryPathSystem() {
+    // Clear any existing data
+    pathSystem = PathSystem();
+
+    // Create the factory nodes with exact coordinates (scaled to window)
+    int node1 = pathSystem.addNode(70, 65);       // Node 1
+    int node2 = pathSystem.addNode(640, 65);      // Node 2
+    int node3 = pathSystem.addNode(985, 65);      // Node 3
+    int node4 = pathSystem.addNode(1860, 65);     // Node 4
+    int node5 = pathSystem.addNode(70, 470);      // Node 5
+    int node6 = pathSystem.addNode(640, 470);     // Node 6
+    int node7 = pathSystem.addNode(985, 320);     // Node 7
+    int node8 = pathSystem.addNode(1860, 320);    // Node 8
+    int node9 = pathSystem.addNode(985, 750);     // Node 9
+    int node10 = pathSystem.addNode(1860, 750);   // Node 10
+    int node11 = pathSystem.addNode(70, 1135);    // Node 11
+    int node12 = pathSystem.addNode(985, 1135);   // Node 12
+    int node13 = pathSystem.addNode(1860, 1135);  // Node 13
+
+    // Add waiting points at T-junctions
+    int wait2_left = pathSystem.addWaitingNode(640 - 150, 65);
+    int wait2_bottom = pathSystem.addWaitingNode(640, 65 + 150);
+    int wait2_3_merged = pathSystem.addWaitingNode(812, 65);
+
+    int wait3_east = pathSystem.addWaitingNode(985 + 150, 65);
+
+    int wait5_top = pathSystem.addWaitingNode(70, 470 - 150);
+    int wait5_right = pathSystem.addWaitingNode(70 + 150, 470);
+    int wait5_bottom = pathSystem.addWaitingNode(70, 470 + 150);
+
+    int wait3_7_merged = pathSystem.addWaitingNode(985, 192);
+    int wait7_east = pathSystem.addWaitingNode(985 + 150, 320);
+    int wait7_south_merged = pathSystem.addWaitingNode(985, 535);
+
+    int wait8_west = pathSystem.addWaitingNode(1860 - 150, 320);
+    int wait8_10_merged = pathSystem.addWaitingNode(1860, 535);
+
+    int wait9_east = pathSystem.addWaitingNode(985 + 150, 750);
+    int wait9_south_merged = pathSystem.addWaitingNode(985, 942);
+
+    int wait12_east = pathSystem.addWaitingNode(985 + 150, 1135);
+    int wait12_west = pathSystem.addWaitingNode(985 - 150, 1135);
+
+    int wait10_left = pathSystem.addWaitingNode(1860 - 150, 750);
+    int wait10_bottom = pathSystem.addWaitingNode(1860, 750 + 150);
+
+    // Connect main nodes
+    pathSystem.addSegment(node1, node2);
+    pathSystem.addSegment(node1, node5);
+    pathSystem.addSegment(node2, node3);
+    pathSystem.addSegment(node2, node6);
+    pathSystem.addSegment(node3, node4);
+    pathSystem.addSegment(node3, node7);
+    pathSystem.addSegment(node4, node8);
+    pathSystem.addSegment(node5, node6);
+    pathSystem.addSegment(node5, node11);
+    pathSystem.addSegment(node7, node8);
+    pathSystem.addSegment(node7, node9);
+    pathSystem.addSegment(node8, node10);
+    pathSystem.addSegment(node9, node10);
+    pathSystem.addSegment(node9, node12);
+    pathSystem.addSegment(node10, node13);
+    pathSystem.addSegment(node11, node12);
+    pathSystem.addSegment(node12, node13);
+
+    // Connect waiting points
+    pathSystem.addSegment(node2, wait2_left);
+    pathSystem.addSegment(node2, wait2_bottom);
+    pathSystem.addSegment(node2, wait2_3_merged);
+    pathSystem.addSegment(node3, wait2_3_merged);
+    pathSystem.addSegment(node3, wait3_east);
+    pathSystem.addSegment(node3, wait3_7_merged);
+    pathSystem.addSegment(node5, wait5_top);
+    pathSystem.addSegment(node5, wait5_right);
+    pathSystem.addSegment(node5, wait5_bottom);
+    pathSystem.addSegment(node7, wait3_7_merged);
+    pathSystem.addSegment(node7, wait7_east);
+    pathSystem.addSegment(node7, wait7_south_merged);
+    pathSystem.addSegment(node9, wait7_south_merged);
+    pathSystem.addSegment(node8, wait8_west);
+    pathSystem.addSegment(node8, wait8_10_merged);
+    pathSystem.addSegment(node9, wait9_east);
+    pathSystem.addSegment(node9, wait9_south_merged);
+    pathSystem.addSegment(node12, wait9_south_merged);
+    pathSystem.addSegment(node12, wait12_east);
+    pathSystem.addSegment(node12, wait12_west);
+    pathSystem.addSegment(node10, wait8_10_merged);
+    pathSystem.addSegment(node10, wait10_left);
+    pathSystem.addSegment(node10, wait10_bottom);
+
+    std::cout << "Factory path system created with " << pathSystem.getNodeCount() << " nodes and "
+              << pathSystem.getSegmentCount() << " segments" << std::endl;
+}
+
+void CarSimulation::syncDetectedVehiclesWithPathSystem() {
+    if (!pathSystemInitialized || !vehicleController) return;
+
+    // ULTRA-SCHNELLE SYNCHRONISATION - Minimale Zwischenschritte
+    for (const auto& detectedAuto : detectedAutos) {
+        if (!detectedAuto.isValid()) continue;
+
+        Point currentCenter = detectedAuto.getCenter();
+        
+        // Schnelle Koordinaten-Validierung
+        if (currentCenter.x <= 0 || currentCenter.y <= 0 || 
+            currentCenter.x >= 1920 || currentCenter.y >= 1200) {
+            continue;
+        }
+
+        int vehicleId = detectedAuto.getId();
+        
+        // Direkte Fahrzeug-Aktualisierung ohne Map-Zwischenspeicherung
+        Auto* pathVehicle = vehicleController->getVehicle(vehicleId);
+        if (!pathVehicle) {
+            // Sofortige Fahrzeug-Erstellung
+            vehicleId = vehicleController->addVehicle(currentCenter); // Direkte Koordinaten
+            pathVehicle = vehicleController->getVehicle(vehicleId);
+        }
+
+        if (pathVehicle) {
+            // SOFORTIGE Position-Update ohne Transform-Overhead
+            vehicleController->updateVehicleFromRealCoordinates(vehicleId, currentCenter, detectedAuto.getDirection());
+
+            // Schnelle Node-Assignment falls nötig
+            if (pathVehicle->currentNodeId == -1) {
+                int nearestNode = pathSystem.findNearestNode(currentCenter, 200.0f);
+                if (nearestNode != -1) {
+                    pathVehicle->currentNodeId = nearestNode;
+                }
+            }
         }
     }
 }
 
-void CarSimulation::renderCars() {
-    // Render cars (connections between paired points) - auf weißem Hintergrund
-    for (const auto& car : cars) {
-        if (car.is_stable && car.front_point && car.identification_point && 
-            car.front_point->is_valid && car.identification_point->is_valid) {
-            
-            // Direkte Pixel-Koordinaten verwenden
-            Vector2 front_screen = { (float)car.front_point->x, (float)car.front_point->y };
-            Vector2 id_screen = { (float)car.identification_point->x, (float)car.identification_point->y };
-            
-            // Zeichne Verbindungslinie (gut sichtbar auf weiß)
-            DrawLineEx(id_screen, front_screen, 5, DARKGREEN);
-            
-            // Zeichne Richtungspfeil
-            float arrow_length = 30;
-            float angle_rad = car.direction * M_PI / 180.0f;
-            Vector2 arrow_end = {
-                (float)(front_screen.x + arrow_length * sin(angle_rad)),
-                (float)(front_screen.y - arrow_length * cos(angle_rad))
-            };
-            
-            DrawLineEx(front_screen, arrow_end, 6, ORANGE);
-            
-            // Zeichne Fahrzeug-Zentrum und Info
-            Vector2 center = {
-                (front_screen.x + id_screen.x) / 2,
-                (front_screen.y + id_screen.y) / 2
-            };
-            
-            DrawCircleV(center, 8, DARKGREEN);
-            DrawText(TextFormat("CAR-%d: %d°", car.car_id, car.direction), 
-                     center.x + 20, center.y - 20, 20, DARKGREEN);
+int CarSimulation::mapDetectedVehicleToPathSystem(const Auto& detectedAuto) {
+    // Map detected vehicle to existing path system vehicle based on ID or create new one
+    int vehicleId = detectedAuto.getId();
+
+    // Check if vehicle already exists in path system
+    Auto* pathVehicle = vehicleController->getVehicle(vehicleId);
+    if (!pathVehicle) {
+        // Create new vehicle in path system
+        Point startPos = transformToPathSystemCoordinates(detectedAuto.getCenter(), FieldTransform{});
+        vehicleId = vehicleController->addVehicle(startPos);
+    }
+
+    return vehicleId;
+}
+
+Point CarSimulation::transformToPathSystemCoordinates(const Point& detectedPosition,
+                                                     const FieldTransform& transform) {
+    // Transform from detection coordinates to path system coordinates
+    // This needs to account for the coordinate calibration and scaling
+
+    // For now, assume 1:1 mapping - you may need to adjust this based on your calibration
+    return Point(detectedPosition.x, detectedPosition.y);
+}
+
+void CarSimulation::updateVehicleFromDetection(int vehicleId, const Auto& detectedAuto,
+                                              const FieldTransform& transform) {
+    if (!vehicleController) return;
+
+    Auto* vehicle = vehicleController->getVehicle(vehicleId);
+    if (!vehicle) return;
+
+    // Update vehicle position from detection
+    Point newPos = transformToPathSystemCoordinates(detectedAuto.getCenter(), transform);
+    vehicle->position = newPos;
+
+    // Update direction
+    vehicle->currentDirection = static_cast<Direction>((int)detectedAuto.getDirection());
+
+    // If vehicle doesn't have a current node, snap to nearest
+    if (vehicle->currentNodeId == -1) {
+        int nearestNode = pathSystem.findNearestNode(newPos, 100.0f);
+        if (nearestNode != -1) {
+            vehicle->currentNodeId = nearestNode;
+            const PathNode* node = pathSystem.getNode(nearestNode);
+            if (node) {
+                vehicle->position = node->position; // Snap to node position
+            }
         }
     }
 }
 
-void CarSimulation::renderUI() {
-    // Komplett weißes Bild - KEINE schwarzen UI-Balken mehr!
-    int currentWidth = GetScreenWidth();
-    int currentHeight = GetScreenHeight();
-    
-    // Koordinaten-Anzeige in den Ecken (schwarzer Text auf weißem Hintergrund)
-    // Oben links: (0,0)
-    DrawText("(0,0)", 5, 5, 20, BLACK);
-    
-    // Oben rechts: (max_x, 0)
-    const char* top_right = TextFormat("(%d,0)", currentWidth-1);
-    int tr_width = MeasureText(top_right, 20);
-    DrawText(top_right, currentWidth - tr_width - 5, 5, 20, BLACK);
-    
-    // Unten links: (0, max_y)
-    const char* bottom_left = TextFormat("(0,%d)", currentHeight-1);
-    DrawText(bottom_left, 5, currentHeight - 25, 20, BLACK);
-    
-    // Unten rechts: (max_x, max_y)
-    const char* bottom_right = TextFormat("(%d,%d)", currentWidth-1, currentHeight-1);
-    int br_width = MeasureText(bottom_right, 20);
-    DrawText(bottom_right, currentWidth - br_width - 5, currentHeight - 25, 20, BLACK);
-    
-    // Minimale Status-Info nur im Fenstermodus (nicht im Vollbild!)
-    if (!is_fullscreen) {
-        int stable_cars = 0;
-        for (const auto& car : cars) {
-            if (car.is_stable) stable_cars++;
-        }
-        
-        // Sehr kleine Info in der Mitte oben (nur im Fenstermodus)
-        const char* status = TextFormat("Autos: %d/%d | F11/F=Vollbild | V=Monitor2 | M=Verschieben | ESC=Ende", stable_cars, NUM_CARS);
-        int status_width = MeasureText(status, 14);
-        DrawText(status, (currentWidth - status_width) / 2, 5, 14, DARKGRAY);
+void CarSimulation::handleVehicleSelection() {
+    // Vehicle selection with F1-F4
+    if (IsKeyPressed(KEY_F1)) {
+        selectedVehicle = 0;
+        std::cout << "Vehicle 1 selected" << std::endl;
     }
-    // Im Vollbildmodus: KEINE störenden Texte - nur Koordinaten!
-}
-
-bool CarSimulation::shouldClose() {
-    return WindowShouldClose();
-}
-
-void CarSimulation::toggleFullscreen() {
-    if (is_fullscreen) {
-        // Wechsel zu Fenstermodus
-        setFullscreen(false);
-    } else {
-        // Wechsel zu Vollbildmodus
-        setFullscreen(true);
+    if (IsKeyPressed(KEY_F2)) {
+        selectedVehicle = 1;
+        std::cout << "Vehicle 2 selected" << std::endl;
+    }
+    if (IsKeyPressed(KEY_F3)) {
+        selectedVehicle = 2;
+        std::cout << "Vehicle 3 selected" << std::endl;
+    }
+    if (IsKeyPressed(KEY_F4)) {
+        selectedVehicle = 3;
+        std::cout << "Vehicle 4 selected" << std::endl;
     }
 }
 
-void CarSimulation::setFullscreen(bool fullscreen) {
-    // Robuste Vollbild-Umschaltung mit mehreren Methoden
-    bool currently_fullscreen = IsWindowFullscreen();
-    
-    if (fullscreen && !currently_fullscreen) {
-        // Speichere aktuelle Fensterposition und -größe
-        windowed_pos_x = GetWindowPosition().x;
-        windowed_pos_y = GetWindowPosition().y;
-        windowed_width = GetScreenWidth();
-        windowed_height = GetScreenHeight();
-        
-        printf("=== VOLLBILD AKTIVIERUNG ===\n");
-        printf("Von: %dx%d bei (%d,%d)\n", windowed_width, windowed_height, windowed_pos_x, windowed_pos_y);
-        
-        // Methode 1: Direkter ToggleFullscreen
-        printf("Versuche Methode 1: ToggleFullscreen...\n");
-        ToggleFullscreen();
-        
-        // Prüfe ob es funktioniert hat
-        if (IsWindowFullscreen()) {
-            is_fullscreen = true;
-            printf("✅ Vollbild aktiviert! Neue Größe: %dx%d\n", GetScreenWidth(), GetScreenHeight());
-        } else {
-            printf("❌ Methode 1 fehlgeschlagen. Versuche Methode 2...\n");
-            
-            // Methode 2: Manuell auf Monitor-Größe setzen
-            int monitor = GetCurrentMonitor();
-            int monitor_width = GetMonitorWidth(monitor);
-            int monitor_height = GetMonitorHeight(monitor);
-            Vector2 monitor_pos = GetMonitorPosition(monitor);
-            
-            printf("Monitor %d: %dx%d bei (%.0f,%.0f)\n", monitor, monitor_width, monitor_height, monitor_pos.x, monitor_pos.y);
-            
-            // Entferne Fensterdekoration und setze auf Monitorgröße
-            SetWindowState(FLAG_WINDOW_UNDECORATED);
-            SetWindowSize(monitor_width, monitor_height);
-            SetWindowPosition((int)monitor_pos.x, (int)monitor_pos.y);
-            
-            is_fullscreen = true;
-            printf("✅ Pseudo-Vollbild aktiviert: %dx%d\n", GetScreenWidth(), GetScreenHeight());
-        }
-        
-    } else if (!fullscreen && currently_fullscreen) {
-        printf("=== FENSTERMODUS AKTIVIERUNG ===\n");
-        
-        // Wenn echter Vollbildmodus
-        if (IsWindowFullscreen()) {
-            ToggleFullscreen();
-        }
-        
-        // Fensterdekoration wiederherstellen
-        ClearWindowState(FLAG_WINDOW_UNDECORATED);
-        
-        // Ursprüngliche Größe wiederherstellen
-        SetWindowSize(windowed_width, windowed_height);
-        SetWindowPosition(windowed_pos_x, windowed_pos_y);
-        
-        is_fullscreen = false;
-        printf("✅ Fenstermodus wiederhergestellt: %dx%d bei (%d,%d)\n", 
-               windowed_width, windowed_height, windowed_pos_x, windowed_pos_y);
-    } else {
-        printf("Vollbild-Status bereits korrekt: %s\n", currently_fullscreen ? "Vollbild" : "Fenster");
-    }
-}
+void CarSimulation::handleTargetAssignment() {
+    if (!pathSystemInitialized || !vehicleController || selectedVehicle < 0) return;
 
-void CarSimulation::updateFieldTransformForCurrentScreen(FieldTransform& transform) {
-    int currentWidth = GetScreenWidth();
-    int currentHeight = GetScreenHeight();
-    
-    // Update transform für aktuellen Bildschirm - GESAMTE Fensterfläche nutzen
-    transform.field_width = currentWidth;
-    transform.field_height = currentHeight;
-    transform.offset_x = 0;
-    transform.offset_y = 0;
-    
-    // Keine UI-Bereiche mehr abziehen - komplettes weißes Fenster!
+    const auto& vehicles = vehicleController->getVehicles();
+    if (selectedVehicle >= vehicles.size()) return;
+
+    int vehicleId = vehicles[selectedVehicle].vehicleId;
+
+    // Mouse click on node for target selection
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        Vector2 mousePos = GetMousePosition();
+        Point worldPos(mousePos.x, mousePos.y);
+
+        // Find nearest node to mouse click
+        int nearestNodeId = pathSystem.findNearestNode(worldPos, 80.0f);
+        if (nearestNodeId != -1) {
+            vehicleController->setVehicleTargetNode(vehicleId, nearestNodeId);
+            std::cout << "Vehicle " << (selectedVehicle + 1) << " target set to node " << nearestNodeId << std::endl;
+        }
+    }
+
+    // Number keys for direct node selection
+    for (int i = 0; i <= 9; i++) {
+        int key = KEY_ZERO + i;
+        if (IsKeyPressed(key)) {
+            int targetNode = (i == 0) ? 10 : i;
+            if (targetNode <= 13) {
+                vehicleController->setVehicleTargetNode(vehicleId, targetNode);
+                std::cout << "Vehicle " << (selectedVehicle + 1) << " target set to node " << targetNode << std::endl;
+            }
+            break;
+        }
+    }
+
+    // Special keys for nodes 11-13
+    if (IsKeyPressed(KEY_Q)) {
+        vehicleController->setVehicleTargetNode(vehicleId, 11);
+        std::cout << "Vehicle " << (selectedVehicle + 1) << " target set to node 11" << std::endl;
+    }
+    if (IsKeyPressed(KEY_Y)) {
+        vehicleController->setVehicleTargetNode(vehicleId, 12);
+        std::cout << "Vehicle " << (selectedVehicle + 1) << " target set to node 12" << std::endl;
+    }
+    if (IsKeyPressed(KEY_X)) {
+        vehicleController->setVehicleTargetNode(vehicleId, 13);
+        std::cout << "Vehicle " << (selectedVehicle + 1) << " target set to node 13" << std::endl;
+    }
+
+    // Random targets for all vehicles
+    if (IsKeyPressed(KEY_R)) {
+        vehicleController->assignRandomTargetsToAllVehicles();
+        std::cout << "Assigned new random targets to all vehicles" << std::endl;
+    }
 }
