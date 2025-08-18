@@ -74,7 +74,7 @@ static SerialCommunication g_serial_comm;
 static std::string g_selected_com_port = "";
 static bool g_auto_send_commands = false;
 static std::chrono::steady_clock::time_point g_last_esp_send = std::chrono::steady_clock::now();
-static const int ESP_SEND_INTERVAL_MS = 100; // Alle 100ms ESP-Befehle senden (zuverlässige Reaktion)
+static const int ESP_SEND_INTERVAL_MS = 10; // Alle 10ms ESP-Befehle senden (maximale Geschwindigkeit)
 
 // ESP-Thread Variablen für völlige Unabhängigkeit von Kamera
 static std::thread g_esp_thread;
@@ -932,8 +932,8 @@ void updateVehicleCommands() {
     auto now = std::chrono::steady_clock::now();
     auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count();
     
-    // Nur alle 200ms für schnelle Reaktion aber trotzdem Stabilität
-    if (time_diff < 200) {
+    // Nur alle 10ms für sehr schnelle Richtungsänderungen und präzise Kontrolle
+    if (time_diff < 10) {
         return;
     }
     last_update = now;
