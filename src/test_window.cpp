@@ -15,6 +15,7 @@
 #include "point.h"
 #include "path_system.h"
 #include "vehicle_controller.h"
+#include "serial_communication.h"
 
 // Alternative: Einfaches Windows API Fenster (ohne Raylib Includes hier)
 #ifdef _WIN32
@@ -67,6 +68,19 @@ static const auto MAX_VEHICLE_AGE = std::chrono::seconds(3); // Fahrzeuge 3 Seku
 static const PathSystem* g_path_system = nullptr;
 static const VehicleController* g_vehicle_controller = nullptr;
 
+// Globale SerialCommunication Instanz
+static SerialCommunication g_serial_comm;
+static std::string g_selected_com_port = "";
+static bool g_auto_send_commands = false;
+static std::chrono::steady_clock::time_point g_last_esp_send = std::chrono::steady_clock::now();
+static const int ESP_SEND_INTERVAL_MS = 100; // Alle 100ms ESP-Befehle senden (öftere kurze Befehle für präzise Steuerung)
+
+// ESP-Thread Variablen für völlige Unabhängigkeit von Kamera
+static std::thread g_esp_thread;
+static std::mutex g_esp_mutex;
+static bool g_esp_thread_running = false;
+static bool g_esp_thread_should_stop = false;
+
 // Globale Variablen für Fahrzeugauswahl und manuelles Auto
 static int g_selected_vehicle_id = -1;
 static Auto g_manual_vehicle;
@@ -98,6 +112,20 @@ static float g_y_curve = 0.0f;          // Y-Kurvenkorrektur für Oben/Unten-Pro
 #define ID_TRACKBAR_X_CURVE    1005
 #define ID_TRACKBAR_Y_CURVE    1006
 
+// Button-IDs für ESP Kommunikation
+#define ID_BUTTON_CONNECT_ESP     2001
+#define ID_BUTTON_DISCONNECT_ESP  2002
+#define ID_BUTTON_SEND_COMMANDS   2003
+#define ID_BUTTON_AUTO_SEND       2004
+#define ID_COMBO_COM_PORTS        2005
+
+// Button-IDs für serielle Kommunikation
+#define ID_BUTTON_CONNECT_ESP     2001
+#define ID_BUTTON_DISCONNECT_ESP  2002
+#define ID_BUTTON_SEND_COMMANDS   2003
+#define ID_BUTTON_AUTO_SEND       2004
+#define ID_COMBO_COM_PORTS        2005
+
 // Trackbar-Handles (nicht verwendet, aber für zukünftige Erweiterungen definiert)
 // static HWND g_trackbar_x_scale = nullptr;
 // static HWND g_trackbar_y_scale = nullptr;
@@ -122,6 +150,44 @@ void setManualVehicleFromCamera(float x, float y) {
         g_manual_vehicle.setPosition(newPos);
         std::cout << "Vehicle position set from camera: (" << x << ", " << y << ")" << std::endl;
     }
+}
+
+// ESP-Thread Funktion - läuft völlig unabhängig von Kamera!
+void espThreadFunction() {
+    std::cout << "🚀 ESP-Thread gestartet - völlig unabhängig von Kamera!" << std::endl;
+    g_esp_thread_running = true;
+    
+    while (!g_esp_thread_should_stop) {
+        {
+            std::lock_guard<std::mutex> lock(g_esp_mutex);
+            
+            if (g_auto_send_commands && !g_selected_com_port.empty()) {
+                auto now = std::chrono::steady_clock::now();
+                auto time_since_last = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_last_esp_send).count();
+                
+                if (time_since_last >= ESP_SEND_INTERVAL_MS) {
+                    // ESP-Kommunikation im separaten Thread
+                    if (g_serial_comm.connect(g_selected_com_port, 115200)) {
+                        if (g_serial_comm.sendVehicleCommands()) {
+                            std::cout << "📡 ESP-Thread: Befehle gesendet (" << g_selected_com_port << ")" << std::endl;
+                        } else {
+                            std::cout << "❌ ESP-Thread: Befehle fehlgeschlagen" << std::endl;
+                        }
+                        g_serial_comm.disconnect();
+                        g_last_esp_send = now;
+                    } else {
+                        std::cout << "❌ ESP-Thread: Verbindung fehlgeschlagen (" << g_selected_com_port << ")" << std::endl;
+                    }
+                }
+            }
+        }
+        
+        // Thread schläft 50ms - schnelle Reaktion für präzise Fahrzeugsteuerung
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    
+    g_esp_thread_running = false;
+    std::cout << "🛑 ESP-Thread beendet" << std::endl;
 }
 
 // Simuliere DetectedObject für Kompatibilität
@@ -165,6 +231,8 @@ int floatToTrackbar(float value, float minVal, float maxVal) {
 LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CREATE: {
+            std::cout << "🔧 DEBUG: Kalibrierungs-Fenster WM_CREATE wird ausgeführt..." << std::endl;
+            
             // Common Controls initialisieren
             InitCommonControls();
 
@@ -226,9 +294,177 @@ LRESULT CALLBACK CalibrationWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
             CreateWindowA("STATIC", "X-Scale: 1.0, Y-Scale: 1.0", WS_VISIBLE | WS_CHILD, 10, y, 300, 20, hwnd, (HMENU)9001, nullptr, nullptr);
             y += 20;
             CreateWindowA("STATIC", "X-Offset: 0, Y-Offset: 0", WS_VISIBLE | WS_CHILD, 10, y, 300, 20, hwnd, (HMENU)9002, nullptr, nullptr);
+            y += 40;
+
+            // ESP Serielle Kommunikation Bereich
+            CreateWindowA("STATIC", "--- ESP KOMUNIKATION ---", WS_VISIBLE | WS_CHILD, 10, y, 200, 20, hwnd, nullptr, nullptr, nullptr);
+            y += 30;
+            
+            // COM-Port Auswahl
+            CreateWindowA("STATIC", "COM-Port:", WS_VISIBLE | WS_CHILD, 10, y, 80, 20, hwnd, nullptr, nullptr, nullptr);
+            HWND comboPort = CreateWindowA("COMBOBOX", "", WS_VISIBLE | WS_CHILD | CBS_DROPDOWNLIST,
+                                          100, y, 100, 200, hwnd, (HMENU)ID_COMBO_COM_PORTS, nullptr, nullptr);
+            
+            // Verfügbare COM-Ports hinzufügen
+            std::cout << "🔧 DEBUG: Suche verfügbare COM-Ports..." << std::endl;
+            std::vector<std::string> ports = SerialCommunication::getAvailablePorts();
+            std::cout << "🔧 DEBUG: " << ports.size() << " COM-Ports gefunden" << std::endl;
+            
+            int com5_index = -1;
+            for (int i = 0; i < ports.size(); i++) {
+                const auto& port = ports[i];
+                std::cout << "🔧 DEBUG: Port " << i << ": " << port << std::endl;
+                SendMessage(comboPort, CB_ADDSTRING, 0, (LPARAM)port.c_str());
+                if (port == "COM5") {
+                    com5_index = i;
+                    std::cout << "🔧 DEBUG: COM5 gefunden bei Index " << i << std::endl;
+                }
+            }
+            
+            // ESP-Port bevorzugen (jeder verfügbare Port für ESP)
+            std::cout << "🔧 DEBUG: COM-Port-Auswahl..." << std::endl;
+            if (!ports.empty()) {
+                std::cout << "🔧 DEBUG: Wähle ersten verfügbaren Port: " << ports[0] << std::endl;
+                SendMessage(comboPort, CB_SETCURSEL, 0, 0);
+                g_selected_com_port = ports[0];
+                
+                // ESP-Verbindung testen (jetzt auf separatem Port - kein Kamera-Konflikt)
+                std::cout << "🔍 Teste ESP-Verfügbarkeit auf " << g_selected_com_port << "..." << std::endl;
+                if (g_serial_comm.connect(g_selected_com_port, 115200)) {
+                    std::cout << "✅ ESP verfügbar auf " << g_selected_com_port << " (separater Port - kein Kamera-Konflikt)" << std::endl;
+                    
+                    // Kurz trennen und wieder verbinden für dauerhafte Verbindung
+                    g_serial_comm.disconnect();
+                    
+                    // Auto-Send aktivieren für regelmäßige Verbindung
+                    g_auto_send_commands = true;
+                    HWND checkbox = GetDlgItem(hwnd, ID_BUTTON_AUTO_SEND);
+                    SendMessage(checkbox, BM_SETCHECK, BST_CHECKED, 0);
+                    
+                    // ESP-Thread starten für völlige Unabhängigkeit
+                    if (!g_esp_thread_running) {
+                        g_esp_thread_should_stop = false;
+                        g_esp_thread = std::thread(espThreadFunction);
+                        g_esp_thread.detach(); // Thread läuft völlig unabhängig
+                    }
+                    
+                    std::cout << "🔄 Auto-Send aktiviert - ESP-Thread gestartet auf " << g_selected_com_port << std::endl;
+                    
+                    SetWindowTextA(GetDlgItem(hwnd, 9003), ("Status: ESP bereit (" + g_selected_com_port + " - separater Thread)").c_str());
+                } else {
+                    std::cout << "❌ ESP nicht verfügbar auf " << g_selected_com_port << std::endl;
+                    SetWindowTextA(GetDlgItem(hwnd, 9003), ("Status: ESP nicht verfügbar (" + g_selected_com_port + ")").c_str());
+                }
+            } else {
+                std::cout << "⚠️ Keine COM-Ports verfügbar!" << std::endl;
+                SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: Keine COM-Ports verfügbar");
+            }
+            y += 35;
+            
+            // ESP Verbindungs-Buttons
+            CreateWindowA("BUTTON", "ESP Verbinden", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                         10, y, 100, 25, hwnd, (HMENU)ID_BUTTON_CONNECT_ESP, nullptr, nullptr);
+            CreateWindowA("BUTTON", "Trennen", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                         120, y, 80, 25, hwnd, (HMENU)ID_BUTTON_DISCONNECT_ESP, nullptr, nullptr);
+            y += 35;
+            
+            // Befehle senden
+            CreateWindowA("BUTTON", "Befehle Senden", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                         10, y, 120, 25, hwnd, (HMENU)ID_BUTTON_SEND_COMMANDS, nullptr, nullptr);
+            y += 35;
+            
+            // Auto-Send Toggle
+            CreateWindowA("BUTTON", "Auto-Send", WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+                         10, y, 100, 20, hwnd, (HMENU)ID_BUTTON_AUTO_SEND, nullptr, nullptr);
+            y += 30;
+            
+            // Status-Anzeige
+            CreateWindowA("STATIC", "Status: Nicht verbunden", WS_VISIBLE | WS_CHILD,
+                         10, y, 250, 20, hwnd, (HMENU)9003, nullptr, nullptr);
 
             return 0;
         }
+        
+        case WM_COMMAND: {
+            int wmId = LOWORD(wParam);
+            switch (wmId) {
+                case ID_BUTTON_CONNECT_ESP: {
+                    if (!g_selected_com_port.empty()) {
+                        if (g_serial_comm.connect(g_selected_com_port, 115200)) {
+                            SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: ESP verbunden!");
+                            std::cout << "✅ ESP erfolgreich verbunden auf " << g_selected_com_port << std::endl;
+                        } else {
+                            SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: Verbindung fehlgeschlagen!");
+                            std::cout << "❌ ESP Verbindung fehlgeschlagen!" << std::endl;
+                        }
+                    }
+                    break;
+                }
+                
+                case ID_BUTTON_DISCONNECT_ESP: {
+                    g_serial_comm.disconnect();
+                    SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: Nicht verbunden");
+                    std::cout << "🔌 ESP Verbindung getrennt" << std::endl;
+                    break;
+                }
+                
+                case ID_BUTTON_SEND_COMMANDS: {
+                    if (g_serial_comm.isConnectedToESP()) {
+                        if (g_serial_comm.sendVehicleCommands()) {
+                            SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: Befehle gesendet!");
+                            std::cout << "📡 Fahrzeugbefehle erfolgreich gesendet" << std::endl;
+                        } else {
+                            SetWindowTextA(GetDlgItem(hwnd, 9003), "Status: Senden fehlgeschlagen!");
+                            std::cout << "❌ Senden der Fahrzeugbefehle fehlgeschlagen!" << std::endl;
+                        }
+                    } else {
+                        MessageBoxA(hwnd, "ESP-Board ist nicht verbunden!", "Fehler", MB_OK | MB_ICONWARNING);
+                    }
+                    break;
+                }
+                
+                case ID_BUTTON_AUTO_SEND: {
+                    g_auto_send_commands = !g_auto_send_commands;
+                    HWND checkbox = GetDlgItem(hwnd, ID_BUTTON_AUTO_SEND);
+                    SendMessage(checkbox, BM_SETCHECK, g_auto_send_commands ? BST_CHECKED : BST_UNCHECKED, 0);
+                    
+                    if (g_auto_send_commands) {
+                        std::cout << "🔄 Auto-Send aktiviert - ESP-Thread startet!" << std::endl;
+                        
+                        // ESP-Thread starten für völlige Unabhängigkeit
+                        if (!g_esp_thread_running) {
+                            g_esp_thread_should_stop = false;
+                            g_esp_thread = std::thread(espThreadFunction);
+                            g_esp_thread.detach(); // Thread läuft völlig unabhängig
+                        }
+                        
+                        if (!g_serial_comm.isConnectedToESP()) {
+                            MessageBoxA(hwnd, "Hinweis: ESP-Board ist nicht verbunden!\nBitte zuerst verbinden.", "Info", MB_OK | MB_ICONINFORMATION);
+                        }
+                    } else {
+                        std::cout << "⏸️ Auto-Send deaktiviert - ESP-Thread stoppt!" << std::endl;
+                        
+                        // ESP-Thread stoppen
+                        g_esp_thread_should_stop = true;
+                        // Thread läuft detached und stoppt sich selbst
+                    }
+                    break;
+                }
+                
+                case ID_COMBO_COM_PORTS: {
+                    if (HIWORD(wParam) == CBN_SELCHANGE) {
+                        int index = SendMessage((HWND)lParam, CB_GETCURSEL, 0, 0);
+                        char portName[10];
+                        SendMessage((HWND)lParam, CB_GETLBTEXT, index, (LPARAM)portName);
+                        g_selected_com_port = std::string(portName);
+                        std::cout << "📍 COM-Port ausgewählt: " << g_selected_com_port << std::endl;
+                    }
+                    break;
+                }
+            }
+            return 0;
+        }
+        
         case WM_HSCROLL: {
             if (LOWORD(wParam) == TB_THUMBTRACK || LOWORD(wParam) == TB_ENDTRACK) {
                 int trackbarId = GetDlgCtrlID((HWND)lParam);
@@ -345,7 +581,7 @@ void createCalibrationWindow() {
     
     // Fenster auf Monitor 3 positionieren (obere linke Ecke)
     int windowWidth = 350;
-    int windowHeight = 380;  // Größer für die zusätzlichen Werte
+    int windowHeight = 500;  // Größer für ESP-Kommunikations-Controls
     int posX = monitor3Rect.left + 10; // 10px vom linken Rand
     int posY = monitor3Rect.top + 10;  // 10px vom oberen Rand
 
@@ -724,8 +960,8 @@ void updateVehicleCommands() {
                             if (angleDiff < -180.0f) angleDiff += 360.0f;
                             
                             // Entscheidung basierend auf Winkeldifferenz
-                            if (abs(angleDiff) <= 3.0f) {
-                                command = 1; // Vorwärts - Richtung stimmt (3° Toleranz)
+                            if (abs(angleDiff) <= 10.0f) {
+                                command = 1; // Vorwärts - Richtung stimmt (10° Toleranz für geradeaus)
                             } else if (angleDiff > 0) {
                                 command = 4; // Rechts drehen
                             } else {
@@ -751,6 +987,9 @@ void updateVehicleCommands() {
 
     jsonFile << "\n  ]\n}";
     jsonFile.close();
+    
+    // ESP-Kommunikation NICHT im Kamera-Frame-Loop! 
+    // Das wird jetzt über separaten Timer/Thread gemacht in CalibrationWindowProc
 }
 
 // Zeichne ein Auto als kompakten Punkt mit Richtungspfeil
@@ -1377,6 +1616,8 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
         case WM_TIMER:
             // Kontinuierlich Vehicle Commands aktualisieren
             updateVehicleCommands();
+            
+            // ESP-Kommunikation läuft jetzt in separatem Thread - NICHT HIER!
             
             // Nur bei Timer-Events neu zeichnen mit weniger Flackern
             InvalidateRect(hwnd, nullptr, FALSE);  // FALSE = kein Hintergrund löschen

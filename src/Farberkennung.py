@@ -683,7 +683,9 @@ class SimpleCoordinateDetector:
         return valid_spots, len(valid_spots)
 
     def detect_colors(self, cropped_frame):
-        """H-Wert-basierte Farberkennung mit Farbdichte-Analyse - OPTIMIERT FÜR GESCHWINDIGKEIT"""
+        """H-Wert-basierte Farberkennung mit Farbdichte-Analyse - PERFORMANCE-OPTIMIERT"""
+        import time
+        start_time = time.time()
         detected_objects = []
 
         try:
@@ -814,6 +816,12 @@ class SimpleCoordinateDetector:
             # Zeige Filtermasken basierend auf Einstellung (für HSV-Justierung)
             if self.show_filter_masks:
                 self.display_filter_masks(filter_masks, detected_objects)
+
+            # Performance-Messung
+            end_time = time.time()
+            processing_time = (end_time - start_time) * 1000  # in ms
+            if processing_time > 50:  # Warnung bei > 50ms
+                print(f"⚠️ LANGSAME Farberkennung: {processing_time:.1f}ms")
 
             return detected_objects, crop_width, crop_height
 
@@ -971,8 +979,8 @@ class SimpleCoordinateDetector:
             # Force window update
             cv2.waitKey(1)
 
-            # Tastatur-Input verarbeiten
-            key = cv2.waitKey(30) & 0xFF
+            # Tastatur-Input verarbeiten (schnellere Verarbeitung)
+            key = cv2.waitKey(1) & 0xFF
             
             if key == 27:  # ESC
                 print("ESC gedrückt - System wird beendet...")
