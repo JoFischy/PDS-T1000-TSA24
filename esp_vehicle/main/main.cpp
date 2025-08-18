@@ -40,10 +40,10 @@ static const char* TAG = "ESP_NOW_DIRECTION_CONTROLLER";
 #define UART_TX_PIN GPIO_NUM_1
 
 // MAC-Adressen der 4 Fahrzeuge
-static uint8_t vehicle_mac_1[] = {0x48, 0xCA, 0x43, 0x2E, 0x34, 0x44}; // Fahrzeug 1 (Test)
-static uint8_t vehicle_mac_2[] = {0x74, 0x4D, 0xBD, 0xA1, 0xBF, 0x04}; // Fahrzeug 2 
-static uint8_t vehicle_mac_3[] = {0x74, 0x4D, 0xBD, 0xA0, 0x72, 0x1C}; // Fahrzeug 3
-static uint8_t vehicle_mac_4[] = {0xDC, 0xDA, 0x0C, 0x20, 0xF2, 0x64}; // Fahrzeug 4
+static uint8_t vehicle_mac_2[] = {0x48, 0xCA, 0x43, 0x2E, 0x34, 0x44}; // Fahrzeug 2 (Test)
+static uint8_t vehicle_mac_1[] = {0x74, 0x4D, 0xBD, 0xA1, 0xBF, 0x04}; // Fahrzeug 1 (grünes Auto)
+static uint8_t vehicle_mac_4[] = {0x74, 0x4D, 0xBD, 0xA0, 0x72, 0x1C}; // Fahrzeug 4 (blaues Auto)
+static uint8_t vehicle_mac_3[] = {0xDC, 0xDA, 0x0C, 0x20, 0xF2, 0x64}; // Fahrzeug 3 (oranges Auto)
 
 // Struktur für Direction/Speed-Daten
 typedef struct {
@@ -70,10 +70,28 @@ static uint8_t* vehicle_macs[] = {
 // Letzte Sendezeit für Rate-Limiting
 static uint32_t last_send_time = 0;
 
+// Zähler für Sendeerfolg
+static int total_messages_sent = 0;
+static int successful_transmissions = 0;
+static int failed_transmissions = 0;
+
 // Callback beim Sendeversuch
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    const char* status_str = (status == ESP_NOW_SEND_SUCCESS) ? "✅ Erfolg" : "❌ Fehler";
-    ESP_LOGI(TAG, "Send to " MACSTR ": %s", MAC2STR(mac_addr), status_str);
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        successful_transmissions++;
+        ESP_LOGI(TAG, "✅ Erfolg an " MACSTR " - Total: %d/%d erfolgreich", 
+                 MAC2STR(mac_addr), successful_transmissions, total_messages_sent);
+    } else {
+        failed_transmissions++;
+        ESP_LOGE(TAG, "❌ Fehler an " MACSTR " - Total: %d fehlgeschlagen", 
+                 MAC2STR(mac_addr), failed_transmissions);
+    }
+    
+    // Übersicht alle 4 Nachrichten (nach jedem Fahrzeug-Zyklus)
+    if ((successful_transmissions + failed_transmissions) % 4 == 0) {
+        ESP_LOGI(TAG, "📊 SENDEBERICHT: %d✅ / %d❌ von %d Nachrichten", 
+                 successful_transmissions, failed_transmissions, total_messages_sent);
+    }
 }
 
 // Callback beim Datenempfang
@@ -109,50 +127,53 @@ void init_uart() {
     ESP_LOGI(TAG, "UART initialized for direction/speed commands");
 }
 
-// Sende Direction/Speed-Daten an ein spezifisches Fahrzeug
-void send_to_vehicle(int direction, int speed, int target_vehicle) {
-    // Rate-Limiting: Mindestabstand zwischen Nachrichten
-    uint32_t current_time = esp_timer_get_time() / 1000;
-    if (current_time - last_send_time < MIN_MESSAGE_INTERVAL) {
-        ESP_LOGW(TAG, "⏳ Rate-Limit: Warte %d ms zwischen Nachrichten", MIN_MESSAGE_INTERVAL);
-        vTaskDelay((MIN_MESSAGE_INTERVAL - (current_time - last_send_time)) / portTICK_PERIOD_MS);
+// Sende Direction/Speed-Daten an ALLE Fahrzeuge nacheinander
+void send_to_all_vehicles(int direction, int speed) {
+    ESP_LOGI(TAG, "📡 Sende an ALLE Fahrzeuge: Direction=%d, Speed=%d", direction, speed);
+    
+    for (int vehicle = 1; vehicle <= NUM_VEHICLES; vehicle++) {
+        // Rate-Limiting: Mindestabstand zwischen Nachrichten
+        uint32_t current_time = esp_timer_get_time() / 1000;
+        if (current_time - last_send_time < MIN_MESSAGE_INTERVAL) {
+            ESP_LOGW(TAG, "⏳ Rate-Limit: Warte %d ms zwischen Nachrichten", MIN_MESSAGE_INTERVAL);
+            vTaskDelay((MIN_MESSAGE_INTERVAL - (current_time - last_send_time)) / portTICK_PERIOD_MS);
+        }
+        
+        direction_data_t cmd_data = {
+            .id = vehicle,
+            .direction = direction,
+            .speed = speed,
+            .timestamp = (uint32_t)(esp_timer_get_time() / 1000) // ms
+        };
+        
+        ESP_LOGI(TAG, "� Sende an Fahrzeug %d: Direction=%d, Speed=%d", vehicle, direction, speed);
+        
+        esp_err_t result = esp_now_send(vehicle_macs[vehicle - 1], (uint8_t*)&cmd_data, sizeof(direction_data_t));
+        if (result == ESP_OK) {
+            ESP_LOGI(TAG, "✅ Fahrzeug %d: Befehl gesendet", vehicle);
+        } else {
+            ESP_LOGE(TAG, "❌ Fahrzeug %d: Fehler beim Senden - %s", vehicle, esp_err_to_name(result));
+        }
+        
+        last_send_time = esp_timer_get_time() / 1000;
+        
+        // Kleine Pause zwischen den Fahrzeugen für bessere Übertragung
+        vTaskDelay(25 / portTICK_PERIOD_MS); // 25ms Pause zwischen Fahrzeugen
     }
     
-    // Validiere Fahrzeug-ID
-    if (target_vehicle < 1 || target_vehicle > NUM_VEHICLES) {
-        ESP_LOGE(TAG, "❌ Ungültige Fahrzeug-ID: %d (erlaubt: 1-4)", target_vehicle);
-        return;
-    }
-    
-    direction_data_t cmd_data = {
-        .id = target_vehicle,
-        .direction = direction,
-        .speed = speed,
-        .timestamp = (uint32_t)(esp_timer_get_time() / 1000) // ms
-    };
-    
-    ESP_LOGI(TAG, "📡 Sende an Fahrzeug %d: Direction=%d, Speed=%d", target_vehicle, direction, speed);
-    
-    esp_err_t result = esp_now_send(vehicle_macs[target_vehicle - 1], (uint8_t*)&cmd_data, sizeof(direction_data_t));
-    if (result == ESP_OK) {
-        ESP_LOGI(TAG, "✅ Fahrzeug %d: Befehl gesendet", target_vehicle);
-    } else {
-        ESP_LOGE(TAG, "❌ Fahrzeug %d: Fehler beim Senden - %s", target_vehicle, esp_err_to_name(result));
-    }
-    
-    last_send_time = esp_timer_get_time() / 1000;
+    ESP_LOGI(TAG, "🏁 Befehle an alle %d Fahrzeuge gesendet", NUM_VEHICLES);
 }
 
 // Validiere Direction/Speed-Befehle
 bool validate_command(int direction, int speed) {
     // Direction muss zwischen 1 und 5 sein
-    if (direction < 1 || direction > 5) {
+    if (direction < 0 || direction > 5) {
         ESP_LOGW(TAG, "❌ Ungültige Direction: %d (erlaubt: 1-5)", direction);
         return false;
     }
     
     // Für Stopp (Direction 5) ist Speed egal, ansonsten 120-255
-    if (direction == 5) {
+    if (direction == 5 || direction == 0) {
         return true; // Stopp ist immer gültig
     }
     
@@ -164,16 +185,16 @@ bool validate_command(int direction, int speed) {
     return true;
 }
 
-// UART Task - empfängt Direction/Speed-Befehle (Format: "direction,speed,vehicle")
+// UART Task - empfängt Direction/Speed-Befehle (Format: "direction,speed" für ALLE Fahrzeuge)
 void uart_task(void *pvParameters) {
     uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     
     ESP_LOGI(TAG, "🚀 UART task started - warte auf Direction/Speed-Befehle");
-    ESP_LOGI(TAG, "📝 Format: 'direction,speed,vehicle'");
-    ESP_LOGI(TAG, "📝 Beispiel: '1,200,3' (Fahrzeug 3 vorwärts mit Speed 200)");
+    ESP_LOGI(TAG, "📝 Format: 'direction,speed' (wird an ALLE 4 Fahrzeuge gesendet)");
+    ESP_LOGI(TAG, "📝 Beispiel: '1,125' (alle Fahrzeuge vorwärts mit Speed 125)");
     ESP_LOGI(TAG, "📋 Directions: 1=Vor, 2=Zurück, 3=Links, 4=Rechts, 5=Stopp");
     ESP_LOGI(TAG, "⚡ Speed: 120-255 (oder 0 bei Stopp)");
-    ESP_LOGI(TAG, "🚗 Vehicle: 1-4 (erforderlich)");
+    ESP_LOGI(TAG, "🚗 Sendet automatisch an alle 4 Fahrzeuge nacheinander");
     
     while (1) {
         int len = uart_read_bytes(UART_NUM, data, BUF_SIZE - 1, 100 / portTICK_PERIOD_MS);
@@ -181,30 +202,30 @@ void uart_task(void *pvParameters) {
             data[len] = '\0'; // Null-terminieren
             ESP_LOGD(TAG, "UART empfangen: %s", (char*)data);
             
-            int direction, speed, target_vehicle;
+            int direction, speed;
             
-            // Parse Direction,Speed,Vehicle aus UART-Daten
-            int parsed = sscanf((char*)data, "%d,%d,%d", &direction, &speed, &target_vehicle);
+            // Parse Direction,Speed aus UART-Daten (ohne Vehicle-ID = an alle senden)
+            int parsed = sscanf((char*)data, "%d,%d", &direction, &speed);
             
-            if (parsed == 3) { // Alle drei Werte erforderlich
-                ESP_LOGI(TAG, "📥 Empfangen: Direction=%d, Speed=%d, Vehicle=%d", 
-                         direction, speed, target_vehicle);
+            if (parsed == 2) { // Nur Direction und Speed erforderlich
+                ESP_LOGI(TAG, "📥 Empfangen: Direction=%d, Speed=%d (für ALLE Fahrzeuge)", 
+                         direction, speed);
                 
                 // Validierung
                 if (validate_command(direction, speed)) {
                     // Bei Stopp (Direction 5) setze Speed auf 0
-                    if (direction == 5) {
+                    if (direction == 5 || direction == 0) {
                         speed = 0;
                     }
                     
-                    ESP_LOGI(TAG, "✅ Befehl gültig -> sende an Fahrzeug %d", target_vehicle);
-                    send_to_vehicle(direction, speed, target_vehicle);
+                    ESP_LOGI(TAG, "✅ Befehl gültig -> sende an ALLE 4 Fahrzeuge");
+                    send_to_all_vehicles(direction, speed);
                 } else {
                     ESP_LOGW(TAG, "❌ Ungültiger Befehl ignoriert");
                 }
             } else {
-                ESP_LOGW(TAG, "❌ Parse-Fehler. Erwartetes Format: 'direction,speed,vehicle'");
-                ESP_LOGW(TAG, "   Beispiele: '1,200,2' (Fahrzeug 2 vorwärts), '5,0,4' (Fahrzeug 4 stopp)");
+                ESP_LOGW(TAG, "❌ Parse-Fehler. Erwartetes Format: 'direction,speed'");
+                ESP_LOGW(TAG, "   Beispiele: '1,125' (alle vorwärts), '5,0' (alle stopp)");
             }
         }
         vTaskDelay(50 / portTICK_PERIOD_MS);
