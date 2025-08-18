@@ -1,5 +1,16 @@
 {
   "vehicles": [
-
+    {
+      "id": 2,
+      "command": 1
+    },
+    {
+      "id": 3,
+      "command": 3
+    },
+    {
+      "id": 1,
+      "command": 3
+    }
   ]
 }

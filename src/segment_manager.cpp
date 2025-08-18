@@ -56,7 +56,6 @@ void SegmentManager::addToQueue(int segmentId, int vehicleId) {
     auto& queue = segment->queuedVehicles;
     if (std::find(queue.begin(), queue.end(), vehicleId) == queue.end()) {
         queue.push_back(vehicleId);
-        std::cout << "Vehicle " << vehicleId << " added to queue for segment " << segmentId << std::endl;
     }
 }
 

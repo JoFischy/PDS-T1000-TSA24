@@ -79,3 +79,5 @@ raylib-prebuilt/
 *.log
 
 build.bat
+
+vehicle_commands.json

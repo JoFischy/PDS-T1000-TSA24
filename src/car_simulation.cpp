@@ -364,8 +364,7 @@ void CarSimulation::createFactoryPathSystem() {
     pathSystem.addSegment(node10, wait10_left);
     pathSystem.addSegment(node10, wait10_bottom);
 
-    std::cout << "Factory path system created with " << pathSystem.getNodeCount() << " nodes and "
-              << pathSystem.getSegmentCount() << " segments" << std::endl;
+    // Path system initialization complete
 }
 
 void CarSimulation::syncDetectedVehiclesWithPathSystem() {

@@ -8,6 +8,8 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <unordered_map>
+#include <ctime>
 #include "Vehicle.h"
 #include "auto.h"
 #include "point.h"
@@ -453,14 +455,6 @@ void detectVehiclesInTestWindow() {
             frontPointUsed[bestFrontVectorIdx] = true;
             Auto detectedAuto(g_points[idIdx], g_points[bestFrontIdx]);
             g_detected_autos.push_back(detectedAuto);
-
-            printf("Created vehicle %s: ID(%.2f, %.2f) + Front(%.2f, %.2f) = Center(%.2f, %.2f)\n",
-                   g_points[idIdx].color.c_str(), 
-                   g_points[idIdx].x, g_points[idIdx].y,
-                   g_points[bestFrontIdx].x, g_points[bestFrontIdx].y,
-                   detectedAuto.getCenter().x, detectedAuto.getCenter().y);
-        } else {
-            printf("No matching Front point found for %s\n", g_points[idIdx].color.c_str());
         }
     }
 }
@@ -654,19 +648,28 @@ std::vector<Auto> getPersistentVehicles() {
 }
 
 // JSON-Commands für Fahrzeugsteuerung schreiben
+// Globale Variable für JSON-Anzeige
+std::string g_json_display_text = "";
+
 void updateVehicleCommands() {
-    if (!g_vehicle_controller || !g_path_system) return;
+    if (!g_vehicle_controller || !g_path_system) {
+        return;
+    }
 
     // JSON-Datei erstellen/überschreiben
     std::ofstream jsonFile("vehicle_commands.json");
     jsonFile << "{\n  \"vehicles\": [\n";
 
     bool firstVehicle = true;
-    std::vector<Auto> current_autos;
-    {
-        std::lock_guard<std::mutex> lock(g_data_mutex);
-        current_autos = g_detected_autos;
-    }
+    
+    // Verwende die GLEICHEN persistenten Fahrzeuge wie für die Zeichnung!
+    std::vector<Auto> current_autos = getPersistentVehicles();
+    
+    // Erstelle Display-Text für Live-Anzeige
+    g_json_display_text = "=== LIVE JSON DATA ===\n";
+    g_json_display_text += "Autos: " + std::to_string(current_autos.size()) + "\n\n";
+
+    // Aktualisiere Daten
 
     for (const Auto& auto_ : current_autos) {
         if (!auto_.isValid()) continue;
@@ -681,41 +684,73 @@ void updateVehicleCommands() {
 
         for (const auto& [vehicleId, controllerVehicle] : vehicles) {
             if (controllerVehicle.vehicleId == auto_.getId()) {
+                Point currentPos = auto_.getCenter();
+                
+                // Prüfe ob Fahrzeug eine aktive Route hat
                 if (!controllerVehicle.currentNodePath.empty() && 
                     controllerVehicle.currentNodeIndex < controllerVehicle.currentNodePath.size()) {
 
                     nextNodeId = controllerVehicle.currentNodePath[controllerVehicle.currentNodeIndex];
-                    command = 1; // 1 = vorwärts (simplified for now)
+                    
+                    // Hole den Zielknoten für Richtungsberechnung
+                    const PathNode* targetNode = g_path_system->getNode(nextNodeId);
+                    if (targetNode) {
+                        // Berechne gewünschte Richtung zur Route
+                        Point targetPos = targetNode->position;
+                        
+                        float routeDx = targetPos.x - currentPos.x;
+                        float routeDy = targetPos.y - currentPos.y;
+                        float distanceToTarget = sqrt(routeDx * routeDx + routeDy * routeDy);
+                        
+                        // Prüfe ob Ziel erreicht ist (30px Toleranz)
+                        if (distanceToTarget < 30.0f) {
+                            command = 0; // Anhalten - Ziel erreicht
+                        } else {
+                            // Berechne gewünschte Richtung (in Grad)
+                            float desiredAngle = atan2(routeDy, routeDx) * 180.0f / M_PI;
+                            if (desiredAngle < 0) desiredAngle += 360.0f;
+                            
+                            // Aktuelle Fahrzeugrichtung
+                            Point frontPoint = auto_.getFrontPoint();
+                            Point centerPoint = auto_.getCenter();
+                            float currentDx = frontPoint.x - centerPoint.x;
+                            float currentDy = frontPoint.y - centerPoint.y;
+                            float currentAngle = atan2(currentDy, currentDx) * 180.0f / M_PI;
+                            if (currentAngle < 0) currentAngle += 360.0f;
+                            
+                            // Berechne Winkeldifferenz
+                            float angleDiff = desiredAngle - currentAngle;
+                            if (angleDiff > 180.0f) angleDiff -= 360.0f;
+                            if (angleDiff < -180.0f) angleDiff += 360.0f;
+                            
+                            // Entscheidung basierend auf Winkeldifferenz
+                            if (abs(angleDiff) <= 3.0f) {
+                                command = 1; // Vorwärts - Richtung stimmt (3° Toleranz)
+                            } else if (angleDiff > 0) {
+                                command = 4; // Rechts drehen
+                            } else {
+                                command = 3; // Links drehen
+                            }
+                        }
+                    }
+                } else {
+                    command = 0; // Anhalten - keine Route
                 }
                 break;
             }
         }
 
+        // Füge Auto-Info zum Display-Text hinzu
+        g_json_display_text += "ID: " + std::to_string(auto_.getId()) + " -> " + std::to_string(command) + "\n";
+
         jsonFile << "    {\n";
-        jsonFile << "      \"vehicle_id\": " << auto_.getId() << ",\n";
-        jsonFile << "      \"current_x\": " << auto_.getCenter().x << ",\n";
-        jsonFile << "      \"current_y\": " << auto_.getCenter().y << ",\n";
-        jsonFile << "      \"next_node_id\": " << nextNodeId << ",\n";
-        jsonFile << "      \"command\": " << command << ",\n";
-        jsonFile << "      \"command_description\": \"";
-
-        switch(command) {
-            case 1: jsonFile << "vorwärts"; break;
-            case 2: jsonFile << "rückwärts"; break;
-            case 3: jsonFile << "links"; break;
-            case 4: jsonFile << "rechts"; break;
-            case 5: jsonFile << "stehen"; break;
-            default: jsonFile << "unbekannt"; break;
-        }
-
-        jsonFile << "\"\n";
+        jsonFile << "      \"id\": " << auto_.getId() << ",\n";
+        jsonFile << "      \"command\": " << command << "\n";
         jsonFile << "    }";
     }
 
     jsonFile << "\n  ]\n}";
     jsonFile.close();
-
-    std::cout << "Vehicle commands updated in vehicle_commands.json" << std::endl;
 }
 
 // Zeichne ein Auto als kompakten Punkt mit Richtungspfeil
@@ -816,17 +851,6 @@ void drawAutoGDI(HDC hdc, const Auto& auto_) {
     if (g_vehicle_controller && g_path_system) {
         // Finde das entsprechende Vehicle im Controller
         const auto& vehicles = g_vehicle_controller->getAllVehicles();
-        
-        // DEBUG: Ausgabe der verfügbaren Fahrzeuge
-        static int debugCounter = 0;
-        if (debugCounter++ % 60 == 0) { // Nur alle 60 Frames (ca. 1x pro Sekunde)
-            std::cout << "DEBUG: Auto ID=" << auto_.getId() << ", Controller hat " << vehicles.size() << " Fahrzeuge:" << std::endl;
-            for (const auto& v : vehicles) {
-                std::cout << "  Vehicle ID=" << v.second.vehicleId << ", targetNodeId=" << v.second.targetNodeId 
-                         << ", currentNodePath.size()=" << v.second.currentNodePath.size() 
-                         << ", currentNodeIndex=" << v.second.currentNodeIndex << std::endl;
-            }
-        }
         
         for (const auto& vehicle : vehicles) {
             // Versuche zuerst direkte ID-Zuordnung
@@ -1082,9 +1106,6 @@ void drawVehicleRouteGDI(HDC hdc, const Auto& vehicle, const PathSystem& pathSys
                     nextTargetPos = mapToFullscreenCoordinates(nextNode->position.x, nextNode->position.y);
                     hasTarget = true;
                     
-                    std::cout << "Drawing arrow for Vehicle " << controllerVehicle.second.vehicleId 
-                              << " to next node " << nextNodeId << " (step " << controllerVehicle.second.currentNodeIndex 
-                              << " of " << controllerVehicle.second.currentNodePath.size() << ")" << std::endl;
                 }
             } else if (controllerVehicle.second.targetNodeId != -1) {
                 // Keine aktive Route, aber Ziel gesetzt: zeige zum finalen Zielknoten
@@ -1259,6 +1280,20 @@ void OnTestWindowPaint(HWND hwnd) {
         DeleteObject(blackBrush);
     }
 
+    // === LIVE JSON ANZEIGE oben links ===
+    SetTextColor(memDC, RGB(0, 255, 0)); // Grüner Text
+    SetBkMode(memDC, TRANSPARENT);
+    
+    // Teile den Display-Text in Zeilen auf
+    std::istringstream iss(g_json_display_text);
+    std::string line;
+    int lineY = 10;
+    
+    while (std::getline(iss, line)) {
+        TextOutA(memDC, 10, lineY, line.c_str(), line.length());
+        lineY += 20; // 20 Pixel Abstand zwischen Zeilen
+    }
+    
     // Zeichne manuelles Test-Auto falls aktiv
     if (g_manual_vehicle_active) {
         drawAutoGDI(memDC, g_manual_vehicle);
@@ -1297,21 +1332,24 @@ void OnTestWindowPaint(HWND hwnd) {
 
         // Zeige ausgewähltes Fahrzeug an
         if (g_selected_vehicle_id != -1) {
-            // Zeichne Text für ausgewähltes Fahrzeug
-            SetTextColor(memDC, RGB(255, 255, 255));
+            // Zeichne Text für ausgewähltes Fahrzeug (rechts von JSON)
+            SetTextColor(memDC, RGB(255, 255, 0)); // Gelb für Auswahl
             SetBkMode(memDC, TRANSPARENT);
 
-            std::string selectedText = "Ausgewaehltes Fahrzeug: " + std::to_string(g_selected_vehicle_id);
-            TextOutA(memDC, 10, 10, selectedText.c_str(), selectedText.length());
+            std::string selectedText = ">>> FAHRZEUG " + std::to_string(g_selected_vehicle_id) + " AUSGEWAEHLT <<<";
+            TextOutA(memDC, 300, 10, selectedText.c_str(), selectedText.length());
 
-            std::string instructionText = "Klicken Sie auf einen Knoten um ein Ziel zu setzen";
-            TextOutA(memDC, 10, 30, instructionText.c_str(), instructionText.length());
+            std::string instructionText = "Klicken Sie auf einen Knoten um Ziel zu setzen";
+            TextOutA(memDC, 300, 30, instructionText.c_str(), instructionText.length());
         } else {
-            SetTextColor(memDC, RGB(255, 255, 255));
+            SetTextColor(memDC, RGB(200, 200, 200)); // Grau für Anleitung
             SetBkMode(memDC, TRANSPARENT);
 
             std::string instructionText = "Klicken Sie auf ein Fahrzeug um es auszuwaehlen";
-            TextOutA(memDC, 10, 10, instructionText.c_str(), instructionText.length());
+            TextOutA(memDC, 300, 10, instructionText.c_str(), instructionText.length());
+            
+            std::string helpText = "Mehrere Fahrzeuge nacheinander anklickbar";
+            TextOutA(memDC, 300, 30, helpText.c_str(), helpText.length());
         }
     }
     
@@ -1337,6 +1375,9 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
             return 0;
 
         case WM_TIMER:
+            // Kontinuierlich Vehicle Commands aktualisieren
+            updateVehicleCommands();
+            
             // Nur bei Timer-Events neu zeichnen mit weniger Flackern
             InvalidateRect(hwnd, nullptr, FALSE);  // FALSE = kein Hintergrund löschen
             return 0;
@@ -1373,6 +1414,10 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
                         
                         // Aktualisiere Fahrzeug-Befehle für die nächste Iteration
                         updateVehicleCommands(); 
+
+                        // Fahrzeugauswahl aufheben damit nächstes Fahrzeug gewählt werden kann
+                        g_selected_vehicle_id = -1;
+                        std::cout << "Bereit für nächste Fahrzeugauswahl" << std::endl;
 
                         InvalidateRect(hwnd, NULL, FALSE); // Weniger Flackern
                     } else {
@@ -1459,7 +1504,6 @@ void createWindowsAPITestWindow() {
         Point frontPos(startPos.x + 20.0f, startPos.y); // 20 Pixel nach rechts
         g_manual_vehicle = Auto(startPos, frontPos);  // Use existing constructor with 2 Points
         g_manual_vehicle_active = true;
-        std::cout << "Manual test vehicle created at center position (" << startPos.x << ", " << startPos.y << ")" << std::endl;
         
         // Warte kurz
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -1576,20 +1620,13 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
         // Konvertiere DetectedObjects zu Points mit Crop-zu-Vollbild Transformation
         g_points.clear();
 
-        printf("Updating test window with %zu detected objects\n", detected_objects.size());
-
         // Convert detected objects to points with fullscreen coordinates
         for (const auto& obj : detected_objects) {
             // Überspringe ungültige Objekte sofort
             if (obj.crop_width <= 0 || obj.crop_height <= 0 || 
                 obj.coordinates.x < 0 || obj.coordinates.y < 0) {
-                printf("SKIP: Invalid object data: color=%s, coords=(%.2f, %.2f), crop_size=(%.2f, %.2f)\n", 
-                       obj.color.c_str(), obj.coordinates.x, obj.coordinates.y, obj.crop_width, obj.crop_height);
                 continue;
             }
-
-            printf("Processing object: color=%s, coords=(%.2f, %.2f), crop_size=(%.2f, %.2f)\n", 
-                   obj.color.c_str(), obj.coordinates.x, obj.coordinates.y, obj.crop_width, obj.crop_height);
 
             float fullscreen_x, fullscreen_y;
             transformCropToFullscreen(obj.coordinates.x, obj.coordinates.y, 
@@ -1604,22 +1641,14 @@ void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_obj
                 // Create point with correct type and color
                 if (obj.color == "Front") {
                     g_points.emplace_back(fullscreen_x, fullscreen_y, PointType::FRONT, obj.color);
-                    printf("Added Front point at (%.2f, %.2f)\n", fullscreen_x, fullscreen_y);
                 } else if (obj.color.find("Heck") == 0) {
                     g_points.emplace_back(fullscreen_x, fullscreen_y, PointType::IDENTIFICATION, obj.color);
-                    printf("Added %s point at (%.2f, %.2f)\n", obj.color.c_str(), fullscreen_x, fullscreen_y);
                 }
-            } else {
-                printf("REJECT: Coordinates outside valid range: (%.2f, %.2f)\n", fullscreen_x, fullscreen_y);
             }
         }
 
-        printf("Total points added: %zu\n", g_points.size());
-
         // Detect vehicles from the updated points
         detectVehiclesInTestWindow();
-
-        printf("Total vehicles detected: %zu\n", g_detected_autos.size());
     }
 
     // Fenster zur Neuzeichnung veranlassen (falls es existiert)

@@ -17,7 +17,6 @@ int VehicleController::addVehicle(const Point& position) {
 
     vehicles[vehicle.vehicleId] = vehicle;
     
-    std::cout << "Added vehicle " << vehicle.vehicleId << " at position (" << position.x << ", " << position.y << ")" << std::endl;
     return vehicle.vehicleId;
 }
 
@@ -112,7 +111,7 @@ bool VehicleController::setVehicleTargetNode(int vehicleId, int targetNodeId) {
 
 bool VehicleController::planPath(int vehicleId, int targetNodeId) {
     Auto* vehicle = getVehicle(vehicleId);
-    if (!vehicle || vehicle->currentNodeId == -1) return false;
+    if (!vehicle) return false;
 
     const PathNode* targetNode = pathSystem->getNode(targetNodeId);
     if (!targetNode) {
@@ -120,16 +119,38 @@ bool VehicleController::planPath(int vehicleId, int targetNodeId) {
         return false;
     }
 
+    // NEUE LOGIK: Finde IMMER den nächstgelegenen Knoten als Startpunkt
+    Point currentPos = vehicle->realWorldCoordinates;
+    int nearestStartNodeId = pathSystem->findNearestNode(currentPos, 300.0f);
+    
+    if (nearestStartNodeId == -1) {
+        // Erweitere Suchradius falls nötig
+        nearestStartNodeId = pathSystem->findNearestNode(currentPos, 500.0f);
+    }
+    
+    if (nearestStartNodeId == -1) {
+        vehicle->state = VehicleState::WAITING;
+        std::cout << "Vehicle " << vehicleId << " cannot find nearest start node from position (" 
+                  << currentPos.x << ", " << currentPos.y << ")" << std::endl;
+        return false;
+    }
+
+    // Aktualisiere currentNodeId auf den nächstgelegenen Knoten
+    vehicle->currentNodeId = nearestStartNodeId;
+    std::cout << "Vehicle " << vehicleId << " using nearest node " << nearestStartNodeId 
+              << " as start point for route to " << targetNodeId << std::endl;
+
     // Already at target?
-    if (vehicle->currentNodeId == targetNodeId) {
+    if (nearestStartNodeId == targetNodeId) {
         vehicle->state = VehicleState::ARRIVED;
         vehicle->currentNodePath.clear();
         vehicle->currentNodeIndex = 0;
+        std::cout << "Vehicle " << vehicleId << " already at target node " << targetNodeId << std::endl;
         return true;
     }
 
-    // NEUE LOGIK: Finde kompletten Knotenpfad (nicht Segmente!)
-    std::vector<int> segmentPath = segmentManager->findOptimalPath(vehicle->currentNodeId, targetNodeId, vehicleId);
+    // Finde optimalen Pfad vom nächstgelegenen Knoten zum Ziel
+    std::vector<int> segmentPath = segmentManager->findOptimalPath(nearestStartNodeId, targetNodeId, vehicleId);
     
     if (segmentPath.empty()) {
         vehicle->state = VehicleState::WAITING;

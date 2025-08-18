@@ -72,14 +72,11 @@ int Auto::extractIdFromColor(const std::string& color) {
         try {
             std::string numberPart = color.substr(4); // Extract everything after "Heck"
             int extractedId = std::stoi(numberPart); // Extract number after "Heck"
-            std::cout << "DEBUG: extractIdFromColor('" << color << "') -> ID=" << extractedId << std::endl;
             return extractedId;
         } catch (...) {
-            std::cout << "DEBUG: extractIdFromColor('" << color << "') -> PARSE FAILED, defaulting to 0" << std::endl;
             return 0; // Default if parsing fails
         }
     }
-    std::cout << "DEBUG: extractIdFromColor('" << color << "') -> NOT HECK COLOR, defaulting to 0" << std::endl;
     return 0; // Default for unknown colors
 }
 
