@@ -49,7 +49,7 @@ void VehicleController::spawnInitialVehicles() {
     // Spawn 4 vehicles at different nodes
     int nodeStep = std::max(1, static_cast<int>(nodes.size()) / 4);
 
-    for (int i = 0; i < 4 && i * nodeStep < nodes.size(); i++) {
+    for (int i = 0; i < 4 && static_cast<size_t>(i * nodeStep) < nodes.size(); i++) {
         const PathNode& node = nodes[i * nodeStep];
         int vehicleId = addVehicle(node.position);
 

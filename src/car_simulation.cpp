@@ -483,7 +483,7 @@ void CarSimulation::handleTargetAssignment() {
     if (!pathSystemInitialized || !vehicleController || selectedVehicle < 0) return;
 
     const auto& vehicles = vehicleController->getVehicles();
-    if (selectedVehicle >= vehicles.size()) return;
+    if (static_cast<size_t>(selectedVehicle) >= vehicles.size()) return;
 
     int vehicleId = vehicles[selectedVehicle].vehicleId;
 

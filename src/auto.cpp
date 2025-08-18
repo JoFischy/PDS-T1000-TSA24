@@ -27,17 +27,17 @@ Auto::Auto(const Point& idPoint, const Point& fPoint)
 
 // New path-system constructors
 Auto::Auto(int id, const Point& startPos) 
-    : vehicleId(id), position(startPos), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
-      currentSegmentIndex(0), speed(50.0f), state(VehicleState::IDLE), currentDirection(Direction::NORTH),
-      isMoving(false), isWaitingInQueue(false), currentSegmentId(-1), direction(0.0f), valid(true), id(id) {
-    center = startPos;
+    : identificationPoint(startPos), frontPoint(startPos), center(startPos), direction(0.0f), valid(true), id(id),
+      vehicleId(id), position(startPos), targetPosition(startPos), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
+      currentSegmentIndex(0), state(VehicleState::IDLE), currentDirection(Direction::NORTH), speed(50.0f),
+      isMoving(false), isWaitingInQueue(false), currentSegmentId(-1) {
 }
 
 Auto::Auto(const Point& startPos, Direction dir) 
-    : position(startPos), targetPosition(startPos), currentDirection(dir), 
-      speed(50.0f), valid(true), id(nextId++), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
-      currentSegmentIndex(0), state(VehicleState::IDLE), isMoving(false), isWaitingInQueue(false),
-      currentSegmentId(-1), vehicleId(id) {
+    : identificationPoint(startPos), frontPoint(startPos), center(startPos), direction(0.0f), valid(true), id(nextId++),
+      vehicleId(id), position(startPos), targetPosition(startPos), currentNodeId(-1), targetNodeId(-1), pendingTargetNodeId(-1),
+      currentSegmentIndex(0), state(VehicleState::IDLE), currentDirection(dir), speed(50.0f),
+      isMoving(false), isWaitingInQueue(false), currentSegmentId(-1) {
     center = startPos;
     direction = static_cast<float>(dir);
 }

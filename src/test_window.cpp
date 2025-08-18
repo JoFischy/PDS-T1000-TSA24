@@ -24,6 +24,10 @@
 
 #pragma comment(lib, "comctl32.lib")  // Link Trackbar-Library
 
+// Konstanten für Vollbild 1920x1200
+static const int FULLSCREEN_WIDTH = 1920;
+static const int FULLSCREEN_HEIGHT = 1200;
+
 // Undefs für Konflikte mit Raylib
 #ifdef Rectangle
 #undef Rectangle
@@ -41,6 +45,9 @@ static std::mutex g_data_mutex;
 static HWND g_test_window_hwnd = nullptr;
 static float g_tolerance = 250.0f;
 static HBITMAP g_backgroundBitmap = nullptr;
+
+// Forward declarations
+void updateTestWindowCoordinates(const std::vector<DetectedObject>& detected_objects);
 
 // Persistente Fahrzeuge (bleiben auch bei kurzen Erkennungsaussetzern)
 struct PersistentVehicle {
@@ -121,7 +128,7 @@ void simulateDetectedObjectFromManualVehicle() {
         std::vector<DetectedObject> simulated;
         DetectedObject obj;
         Point pos = g_manual_vehicle.getCenter();
-        obj.coordinates = pos;
+        obj.coordinates = Point2D(pos.x, pos.y);  // Convert Point to Point2D
         obj.color = "Heck1";
         obj.crop_width = FULLSCREEN_WIDTH;
         obj.crop_height = FULLSCREEN_HEIGHT;
@@ -129,7 +136,7 @@ void simulateDetectedObjectFromManualVehicle() {
         
         // Front-Point simulieren (10 Pixel nach vorn)
         DetectedObject frontObj;
-        frontObj.coordinates = Point(pos.x, pos.y - 10);
+        frontObj.coordinates = Point2D(pos.x, pos.y - 10);  // Convert Point to Point2D
         frontObj.color = "Front";
         frontObj.crop_width = FULLSCREEN_WIDTH;
         frontObj.crop_height = FULLSCREEN_HEIGHT;
@@ -141,10 +148,6 @@ void simulateDetectedObjectFromManualVehicle() {
 
 // Kalibrierungs-Fenster
 static HWND g_calibration_window = nullptr;
-
-// Konstanten für vollbild 1920x1200
-static const int FULLSCREEN_WIDTH = 1920;
-static const int FULLSCREEN_HEIGHT = 1200;
 
 // Trackbar-Wert zu Float konvertieren
 float trackbarToFloat(int trackbarValue, float minVal, float maxVal) {
@@ -1309,7 +1312,7 @@ void createWindowsAPITestWindow() {
         // Initialisiere manuelles Test-Auto in der Mitte
         Point startPos(FULLSCREEN_WIDTH / 2.0f, FULLSCREEN_HEIGHT / 2.0f);
         Point frontPos(startPos.x + 20.0f, startPos.y); // 20 Pixel nach rechts
-        g_manual_vehicle = Auto(999, startPos, frontPos);
+        g_manual_vehicle = Auto(startPos, frontPos);  // Use existing constructor with 2 Points
         g_manual_vehicle_active = true;
         std::cout << "Manual test vehicle created at center position (" << startPos.x << ", " << startPos.y << ")" << std::endl;
         

@@ -53,12 +53,24 @@ int main(int argc, char* argv[]) {
     SetTraceLogLevel(LOG_WARNING); // Reduziere Logs
 
     if (auto_fullscreen_monitor2) {
-        // Monitor 2 Setup - minimal output
+        // Monitor 3 Setup für Raylib - minimal output (getauscht: war vorher Monitor 2)
         InitWindow(800, 600, "PDS-T1000-TSA24");
 
         int monitorCount = GetMonitorCount();
 
-        if (monitorCount >= 2) {
+        if (monitorCount >= 3) {
+            Vector2 monitor3Pos = GetMonitorPosition(2);  // Monitor 3 (Index 2)
+            screenWidth = GetMonitorWidth(2);
+            screenHeight = GetMonitorHeight(2);
+
+            WaitTime(0.1f);
+            SetWindowPosition((int)monitor3Pos.x + 100, (int)monitor3Pos.y + 100);
+            WaitTime(0.1f);
+            SetWindowSize(screenWidth - 200, screenHeight - 200);
+            WaitTime(0.1f);
+            ToggleFullscreen();
+        } else if (monitorCount >= 2) {
+            // Fallback: Monitor 2 für Raylib wenn kein Monitor 3 vorhanden
             Vector2 monitor2Pos = GetMonitorPosition(1);
             screenWidth = GetMonitorWidth(1);
             screenHeight = GetMonitorHeight(1);
@@ -95,25 +107,26 @@ int main(int argc, char* argv[]) {
     int monitorCount = GetMonitorCount();
 
     if (auto_fullscreen_monitor2) {
-        // Raylib läuft auf Monitor 2, CV2-Fenster sollen auf Monitor 3 (wenn verfügbar)
-        std::cout << "Raylib läuft auf Monitor 2 - CV2-Fenster werden auf Monitor 3 positioniert" << std::endl;
+        // Raylib läuft auf Monitor 3, CV2-Fenster sollen auf Monitor 2 (getauscht)
+        std::cout << "Raylib läuft auf Monitor 3 - CV2-Fenster werden auf Monitor 2 positioniert" << std::endl;
 
-        if (monitorCount >= 3) {
-            // Verwende Monitor 3 für CV2-Fenster
-            Vector2 monitor3Pos = GetMonitorPosition(2);  // Monitor 3 (Index 2)
-            std::cout << "Monitor 3 verfügbar bei Position: " << monitor3Pos.x << ", " << monitor3Pos.y << std::endl;
+        if (monitorCount >= 2) {
+            // Verwende Monitor 2 für CV2-Fenster
+            Vector2 monitor2Pos = GetMonitorPosition(1);  // Monitor 2 (Index 1)
+            std::cout << "Monitor 2 verfügbar bei Position: " << monitor2Pos.x << ", " << monitor2Pos.y << std::endl;
 
-            if (set_python_monitor3_position((int)monitor3Pos.x + 50, (int)monitor3Pos.y + 50)) {
-                std::cout << "CV2-Fenster erfolgreich auf Monitor 3 konfiguriert" << std::endl;
+            // Aktiviere Monitor-Modus und setze Position
+            if (enable_python_monitor3_mode() && set_python_monitor3_position((int)monitor2Pos.x + 50, (int)monitor2Pos.y + 50)) {
+                std::cout << "CV2-Fenster erfolgreich auf Monitor 2 konfiguriert" << std::endl;
             } else {
-                std::cout << "Warnung: Monitor 3 Konfiguration fehlgeschlagen" << std::endl;
+                std::cout << "Warnung: Monitor 2 Konfiguration fehlgeschlagen" << std::endl;
             }
         } else {
-            // Fallback: Verwende Monitor 1 für CV2-Fenster wenn kein Monitor 3
+            // Fallback: Verwende Monitor 1 für CV2-Fenster wenn kein Monitor 2
             Vector2 monitor1Pos = GetMonitorPosition(0);  // Monitor 1 (Index 0)
-            std::cout << "Nur 2 Monitore - CV2-Fenster werden auf Monitor 1 (Primär) positioniert" << std::endl;
+            std::cout << "Nur 1 Monitor - CV2-Fenster werden auf Monitor 1 (Primär) positioniert" << std::endl;
 
-            if (set_python_monitor3_position((int)monitor1Pos.x + 50, (int)monitor1Pos.y + 50)) {
+            if (enable_python_monitor3_mode() && set_python_monitor3_position((int)monitor1Pos.x + 50, (int)monitor1Pos.y + 50)) {
                 std::cout << "CV2-Fenster erfolgreich auf Monitor 1 konfiguriert" << std::endl;
             }
         }
@@ -157,11 +170,11 @@ int main(int argc, char* argv[]) {
     static int pending_monitor_y = 0;
 
     // Speichere Monitor-Position für nachträgliche Konfiguration
-    if (auto_fullscreen_monitor2 && monitorCount >= 3) {
-        Vector2 monitor3Pos = GetMonitorPosition(2);
+    if (auto_fullscreen_monitor2 && monitorCount >= 2) {
+        Vector2 monitor2Pos = GetMonitorPosition(1);  // Monitor 2 nach dem Tausch
         monitor_config_pending = true;
-        pending_monitor_x = (int)monitor3Pos.x + 50;
-        pending_monitor_y = (int)monitor3Pos.y + 50;
+        pending_monitor_x = (int)monitor2Pos.x + 50;
+        pending_monitor_y = (int)monitor2Pos.y + 50;
     }
 
     // EINFACHE HAUPTSCHLEIFE
@@ -185,6 +198,17 @@ int main(int argc, char* argv[]) {
         if (monitor_config_pending) {
             configure_monitor_position_delayed(pending_monitor_x, pending_monitor_y);
             monitor_config_pending = false; // Nur einmal versuchen
+        }
+
+        // Alle 120 Frames (ca. alle 2 Sekunden) Fenster neu positionieren, falls sie verrutscht sind
+        static int repositioning_counter = 0;
+        repositioning_counter++;
+        if (auto_fullscreen_monitor2 && repositioning_counter >= 120) {
+            repositioning_counter = 0;
+            if (monitorCount >= 2) {
+                Vector2 monitor2Pos = GetMonitorPosition(1);
+                set_python_monitor3_position((int)monitor2Pos.x + 50, (int)monitor2Pos.y + 50);
+            }
         }
 
         // Update car simulation with real detected objects (mit Vollbild-Koordinaten)

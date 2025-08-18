@@ -11,6 +11,6 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo Build successful!
 echo.
-echo Starte Kamera-Tracking-System auf Monitor 2...
-echo (Embedded Python + Raylib Integration)
+echo Starte Kamera-Tracking-System auf Monitor 3 (Raylib) + Monitor 2 (Python)...
+echo (Nach dem Tausch: Raylib auf Monitor 3, Python auf Monitor 2)
 .\main.exe --monitor2
