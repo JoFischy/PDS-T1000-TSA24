@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <fstream>
 #include <unordered_map>
+#include <map>
 #include <ctime>
 #include "Vehicle.h"
 #include "auto.h"
@@ -81,10 +82,16 @@ static std::mutex g_esp_mutex;
 static bool g_esp_thread_running = false;
 static bool g_esp_thread_should_stop = false;
 
-// Richtungssteuerungs-Verbesserungen
-static std::unordered_map<int, int> g_last_vehicle_commands; // Letzter Befehl pro Fahrzeug
-static std::unordered_map<int, std::chrono::steady_clock::time_point> g_command_start_times; // Start der aktuellen Befehlszeit
-static const int MAX_TURN_DURATION_MS = 500; // Maximale Drehdauer bevor Zwangsstop
+// Kurze Dreh-Pausen System (alle 50ms kurz anhalten beim Drehen)
+static std::unordered_map<int, std::chrono::steady_clock::time_point> g_last_command_times; // Letzte Befehlszeit pro Fahrzeug
+static std::unordered_map<int, int> g_vehicle_step_state; // 0=Stop+Berechnen, 1=Ausführen
+static const int STEP_DURATION_MS = 2000; // ULTRA-STABIL: 2 Sekunden für maximale Stabilität
+
+// 🔍 VEREINFACHTES DEBUG-SYSTEM (weniger Spam) 🔍
+static std::unordered_map<int, std::chrono::steady_clock::time_point> g_camera_update_times; // Wann Kamera-Daten aktualisiert
+static std::unordered_map<int, float> g_last_angles; // Letzte berechnete Winkel
+static auto g_debug_start_time = std::chrono::steady_clock::now(); // System-Start für relative Zeiten
+static int g_debug_counter = 0; // Reduziert Debug-Spam
 
 // Globale Variablen für Fahrzeugauswahl und manuelles Auto
 static int g_selected_vehicle_id = -1;
@@ -187,9 +194,14 @@ void espThreadFunction() {
                     // Befehle senden (ohne disconnect!)
                     if (esp_connected) {
                         if (g_serial_comm.sendVehicleCommands()) {
-                            std::cout << "📡 ESP-Thread: Befehle gesendet (" << g_selected_com_port << ")" << std::endl;
+                            // Nur alle 50 ESP-Messages (reduziert Spam)
+                            static int esp_debug_counter = 0;
+                            esp_debug_counter++;
+                            if (esp_debug_counter % 50 == 0) {
+                                std::cout << "📡 ESP-Thread: Befehle gesendet (" << g_selected_com_port << ")" << std::endl;
+                            }
                         } else {
-                            std::cout << "❌ ESP-Thread: Befehle fehlgeschlagen" << std::endl;
+                            std::cout << "❌ ESP-Thread: Befehle fehlgeschlagen - Neuverbindung..." << std::endl;
                             // Bei Fehler: Verbindung zurücksetzen für Neuverbindung
                             esp_connected = false;
                             g_serial_comm.disconnect();
@@ -912,128 +924,174 @@ void updateVehicleCommands() {
         return;
     }
 
+    // PRÄZISIONS-IMPULSE: Kurze Drehbefehle mit Pausen für Neuberechnung
+    static auto last_update = std::chrono::steady_clock::now();
+    static std::map<int, std::chrono::steady_clock::time_point> vehicle_last_turn_time; // Letzte Drehzeit pro Fahrzeug
+    static std::map<int, int> vehicle_turn_state; // 0=warten, 1=drehen_links, 2=drehen_rechts, 3=fahren
+    
+    auto now = std::chrono::steady_clock::now();
+    auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count();
+    
+    // Nur alle 200ms für schnelle Reaktion aber trotzdem Stabilität
+    if (time_diff < 200) {
+        return;
+    }
+    last_update = now;
+
     // JSON-Datei erstellen/überschreiben
     std::ofstream jsonFile("vehicle_commands.json");
     jsonFile << "{\n  \"vehicles\": [\n";
 
     bool firstVehicle = true;
-    
-    // Verwende die GLEICHEN persistenten Fahrzeuge wie für die Zeichnung!
     std::vector<Auto> current_autos = getPersistentVehicles();
     
     // Erstelle Display-Text für Live-Anzeige
-    g_json_display_text = "=== LIVE JSON DATA ===\n";
+    g_json_display_text = "=== PRÄZISIONS-IMPULSE SYSTEM ===\n";
     g_json_display_text += "Autos: " + std::to_string(current_autos.size()) + "\n\n";
 
-    // Aktualisiere Daten
-
+    // PRÄZISE IMPULSE BEFEHLSLOGIK - KURZE DREH-IMPULSE!
     for (const Auto& auto_ : current_autos) {
         if (!auto_.isValid()) continue;
 
         if (!firstVehicle) jsonFile << ",\n";
         firstVehicle = false;
 
+        int vehicle_id = auto_.getId();
+        int command = 0; // Default: Stopp
+        
+        // Initialisiere Fahrzeug-Status falls nötig
+        if (vehicle_last_turn_time.find(vehicle_id) == vehicle_last_turn_time.end()) {
+            vehicle_last_turn_time[vehicle_id] = now;
+            vehicle_turn_state[vehicle_id] = 0; // Warten
+        }
+        
         // Finde das entsprechende Vehicle im Controller
         const auto& vehicles = g_vehicle_controller->getAllVehicles();
-        int command = 5; // 5 = stehen (default)
-        int nextNodeId = -1;
-
-        for (const auto& [vehicleId, controllerVehicle] : vehicles) {
-            if (controllerVehicle.vehicleId == auto_.getId()) {
+        
+        for (const auto& [controllerId, controllerVehicle] : vehicles) {
+            if (controllerVehicle.vehicleId == vehicle_id) {
                 Point currentPos = auto_.getCenter();
                 
                 // Prüfe ob Fahrzeug eine aktive Route hat
                 if (!controllerVehicle.currentNodePath.empty() && 
                     controllerVehicle.currentNodeIndex < controllerVehicle.currentNodePath.size()) {
 
-                    nextNodeId = controllerVehicle.currentNodePath[controllerVehicle.currentNodeIndex];
-                    
-                    // Hole den Zielknoten für Richtungsberechnung
+                    int nextNodeId = controllerVehicle.currentNodePath[controllerVehicle.currentNodeIndex];
                     const PathNode* targetNode = g_path_system->getNode(nextNodeId);
+                    
                     if (targetNode) {
-                        // Berechne gewünschte Richtung zur Route
                         Point targetPos = targetNode->position;
                         
                         float routeDx = targetPos.x - currentPos.x;
                         float routeDy = targetPos.y - currentPos.y;
                         float distanceToTarget = sqrt(routeDx * routeDx + routeDy * routeDy);
-                        
-                        // Prüfe ob Ziel erreicht ist (30px Toleranz)
-                        if (distanceToTarget < 30.0f) {
-                            command = 0; // Anhalten - Ziel erreicht
-                        } else {
-                            // Berechne gewünschte Richtung (in Grad)
-                            float desiredAngle = atan2(routeDy, routeDx) * 180.0f / M_PI;
-                            if (desiredAngle < 0) desiredAngle += 360.0f;
-                            
-                            // Aktuelle Fahrzeugrichtung
+
+                        if (distanceToTarget > 20.0f) {
+                            // Berechne gewünschte Richtung zur Route
+                            float targetAngle = atan2(-routeDy, routeDx) * 180.0f / M_PI;
+                            if (targetAngle < 0) targetAngle += 360.0f;
+
+                            // Hole aktuellen Winkel
                             Point frontPoint = auto_.getFrontPoint();
-                            Point centerPoint = auto_.getCenter();
-                            float currentDx = frontPoint.x - centerPoint.x;
-                            float currentDy = frontPoint.y - centerPoint.y;
-                            float currentAngle = atan2(currentDy, currentDx) * 180.0f / M_PI;
+                            float currentDx = frontPoint.x - currentPos.x;
+                            float currentDy = frontPoint.y - currentPos.y;
+                            float currentAngle = atan2(-currentDy, currentDx) * 180.0f / M_PI;
                             if (currentAngle < 0) currentAngle += 360.0f;
-                            
-                            // Berechne Winkeldifferenz
-                            float angleDiff = desiredAngle - currentAngle;
+
+                            // Berechne Winkeldifferenz (-180 bis +180)
+                            float angleDiff = targetAngle - currentAngle;
                             if (angleDiff > 180.0f) angleDiff -= 360.0f;
                             if (angleDiff < -180.0f) angleDiff += 360.0f;
-                            
-                            // Entscheidung basierend auf Winkeldifferenz
-                            int new_command;
-                            if (abs(angleDiff) <= 8.0f) {
-                                new_command = 1; // Vorwärts - Richtung stimmt (8° Toleranz für schnellere Reaktion)
-                            } else if (angleDiff > 0) {
-                                new_command = 4; // Rechts drehen
+
+                            // Zeit seit letztem Drehbefehl
+                            auto time_since_turn = std::chrono::duration_cast<std::chrono::milliseconds>(now - vehicle_last_turn_time[vehicle_id]).count();
+
+                            // PRÄZISIONS-NAVIGATION: Kleine Toleranz (4°) mit Impulsen
+                            if (abs(angleDiff) > 4.0f) {  // 4° Toleranz für hohe Präzision
+                                
+                                // Impulse-System: 50ms drehen, dann 100ms warten für Neuberechnung
+                                if (vehicle_turn_state[vehicle_id] == 0 && time_since_turn > 100) {
+                                    // Starte neuen Drehimpuls - KORRIGIERTE RICHTUNG!
+                                    command = (angleDiff > 0) ? 3 : 4; // RECHTS=3, LINKS=4 (KORRIGIERT!)
+                                    vehicle_turn_state[vehicle_id] = (angleDiff > 0) ? 2 : 1;
+                                    vehicle_last_turn_time[vehicle_id] = now;
+                                    
+                                    std::cout << "🔄 DREH-IMPULS START: ID=" << vehicle_id 
+                                             << " DIFF=" << angleDiff << "° CMD=" << command << "\n";
+                                } else if (vehicle_turn_state[vehicle_id] > 0 && time_since_turn < 50) {
+                                    // Drehimpuls läuft noch (50ms) - KORRIGIERTE RICHTUNG!
+                                    command = (vehicle_turn_state[vehicle_id] == 2) ? 3 : 4;
+                                    
+                                    std::cout << "🔄 DREH-IMPULS AKTIV: ID=" << vehicle_id 
+                                             << " Zeit=" << time_since_turn << "ms CMD=" << command << "\n";
+                                } else if (vehicle_turn_state[vehicle_id] > 0 && time_since_turn >= 50) {
+                                    // Drehimpuls beendet, warte für Neuberechnung
+                                    command = 0; // STOPP
+                                    vehicle_turn_state[vehicle_id] = 0; // Zurück zu Warten
+                                    
+                                    std::cout << "⏸️ DREH-PAUSE: ID=" << vehicle_id 
+                                             << " DIFF=" << angleDiff << "° STOPP für Neuberechnung\n";
+                                } else {
+                                    // Noch in Wartezeit
+                                    command = 0; // STOPP
+                                }
+                                
                             } else {
-                                new_command = 3; // Links drehen
+                                // Winkel ist gut genug - VORWÄRTS-IMPULS-SYSTEM!
+                                // Impulse-System: 50ms vorwärts, dann 100ms warten
+                                if (vehicle_turn_state[vehicle_id] == 0 && time_since_turn > 100) {
+                                    // Starte Vorwärts-Impuls
+                                    command = 1; // Vorwärts
+                                    vehicle_turn_state[vehicle_id] = 3; // Fahrmodus
+                                    vehicle_last_turn_time[vehicle_id] = now;
+                                    
+                                    std::cout << "🎯 VORWÄRTS-IMPULS START: ID=" << vehicle_id 
+                                             << " DIFF=" << angleDiff << "° FAHRE!\n";
+                                } else if (vehicle_turn_state[vehicle_id] == 3 && time_since_turn < 50) {
+                                    // Vorwärts-Impuls läuft noch (50ms)
+                                    command = 1; // Vorwärts
+                                    
+                                    std::cout << "🎯 VORWÄRTS-IMPULS AKTIV: ID=" << vehicle_id 
+                                             << " Zeit=" << time_since_turn << "ms\n";
+                                } else if (vehicle_turn_state[vehicle_id] == 3 && time_since_turn >= 50) {
+                                    // Vorwärts-Impuls beendet, kurze Pause
+                                    command = 0; // STOPP
+                                    vehicle_turn_state[vehicle_id] = 0; // Zurück zu Warten
+                                    
+                                    std::cout << "⏸️ VORWÄRTS-PAUSE: ID=" << vehicle_id 
+                                             << " DIFF=" << angleDiff << "° STOPP für Neuberechnung\n";
+                                } else {
+                                    // Noch in Wartezeit
+                                    command = 0; // STOPP
+                                }
                             }
                             
-                            // Überprüfe, ob das Fahrzeug zu lange in eine Richtung dreht
-                            auto now = std::chrono::steady_clock::now();
-                            int vehicle_id = auto_.getId();
-                            
-                            // Wenn der Befehl sich geändert hat, reset der Timer
-                            if (g_last_vehicle_commands[vehicle_id] != new_command) {
-                                g_command_start_times[vehicle_id] = now;
-                                g_last_vehicle_commands[vehicle_id] = new_command;
-                            }
-                            
-                            // Prüfe, ob zu lange gedreht wird
-                            auto command_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                now - g_command_start_times[vehicle_id]).count();
-                            
-                            if ((new_command == 3 || new_command == 4) && command_duration > MAX_TURN_DURATION_MS) {
-                                // Zwangsstop nach zu langem Drehen
-                                command = 1; // Vorwärts fahren
-                                g_command_start_times[vehicle_id] = now; // Reset Timer
-                                std::cout << "🚨 Fahrzeug " << vehicle_id << ": Drehdauer-Limit erreicht, wechsle zu Vorwärts\n";
-                            } else {
-                                command = new_command;
-                            }
+                            // DEBUG: Detaillierte Ausgabe
+                            std::cout << "📐 PRÄZISION [" << time_diff << "ms] ID=" << vehicle_id 
+                                     << " ANG=" << currentAngle << "° -> " << targetAngle 
+                                     << "° DIFF=" << angleDiff << "° STATE=" << vehicle_turn_state[vehicle_id] 
+                                     << " CMD=" << command << "\n";
                         }
                     }
-                } else {
-                    command = 0; // Anhalten - keine Route
                 }
                 break;
             }
         }
-
-        // Füge Auto-Info zum Display-Text hinzu
-        g_json_display_text += "ID: " + std::to_string(auto_.getId()) + " -> " + std::to_string(command) + "\n";
-
+        
+        // JSON schreiben
         jsonFile << "    {\n";
-        jsonFile << "      \"id\": " << auto_.getId() << ",\n";
+        jsonFile << "      \"id\": " << vehicle_id << ",\n";
         jsonFile << "      \"command\": " << command << "\n";
         jsonFile << "    }";
+        
+        // Display-Text aktualisieren
+        g_json_display_text += "ID: " + std::to_string(vehicle_id) + " -> " + std::to_string(command) + "\n";
     }
 
     jsonFile << "\n  ]\n}";
     jsonFile.close();
     
-    // ESP-Kommunikation NICHT im Kamera-Frame-Loop! 
-    // Das wird jetzt über separaten Timer/Thread gemacht in CalibrationWindowProc
+    std::cout << "📡 PRÄZISION UPDATE: JSON geschrieben (200ms Intervall)\n";
 }
 
 // Zeichne ein Auto als kompakten Punkt mit Richtungspfeil
