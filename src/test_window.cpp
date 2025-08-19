@@ -99,6 +99,11 @@ static Auto g_manual_vehicle;
 static bool g_manual_vehicle_active = false;
 static float g_manual_speed = 3.0f;
 
+// Gefahren-Warnung System für Video-Demo
+static Point g_danger_position(-1, -1);  // Position der Gefahrenstelle (-1,-1 = keine Gefahr)
+static bool g_danger_active = false;     // Ist das Gefahren-Blinken aktiv?
+static auto g_danger_start_time = std::chrono::steady_clock::now();  // Startzeit des Blinkens
+
 // Kalibrierungsparameter für Koordinaten-Anpassung
 static float g_x_scale = 1.0f;          // X-Skalierung (Standard: 1.0)
 static float g_y_scale = 1.0f;          // Y-Skalierung (Standard: 1.0)
@@ -1691,6 +1696,60 @@ void OnTestWindowPaint(HWND hwnd) {
             
             std::string helpText = "Mehrere Fahrzeuge nacheinander anklickbar";
             TextOutA(memDC, 300, 30, helpText.c_str(), helpText.length());
+            
+            // Neue Gefahren-Funktion Anleitung
+            SetTextColor(memDC, RGB(255, 100, 100)); // Rötlich für Gefahren-Info
+            std::string dangerHelp = "RECHTSKLICK = Gefahrenstelle setzen (blinkt 10s) | 'D' = Gefahr aus";
+            TextOutA(memDC, 300, 50, dangerHelp.c_str(), dangerHelp.length());
+        }
+    }
+    
+    // GEFAHREN-WARNUNG BLINKEN (für Video-Demo)
+    if (g_danger_active && g_danger_position.x >= 0 && g_danger_position.y >= 0) {
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - g_danger_start_time).count();
+        
+        // Blinke alle 500ms (0.5 Sekunden)
+        bool should_draw = (elapsed / 500) % 2 == 0;
+        
+        if (should_draw) {
+            // Zeichne großen roten Kreis für Gefahr
+            HBRUSH redBrush = CreateSolidBrush(RGB(255, 50, 50));  // Helles Rot
+            HPEN redPen = CreatePen(PS_SOLID, 8, RGB(255, 0, 0));   // Dicker roter Rand
+            
+            SelectObject(memDC, redBrush);
+            SelectObject(memDC, redPen);
+            
+            // Großer Warnkreis (Radius 60)
+            int radius = 60;
+            Ellipse(memDC, 
+                    g_danger_position.x - radius, g_danger_position.y - radius,
+                    g_danger_position.x + radius, g_danger_position.y + radius);
+            
+            // Kleinerer innerer Kreis für besseren Effekt
+            HBRUSH darkRedBrush = CreateSolidBrush(RGB(150, 0, 0));
+            SelectObject(memDC, darkRedBrush);
+            int innerRadius = 30;
+            Ellipse(memDC, 
+                    g_danger_position.x - innerRadius, g_danger_position.y - innerRadius,
+                    g_danger_position.x + innerRadius, g_danger_position.y + innerRadius);
+            
+            // Gefahrenzeichen Text
+            SetTextColor(memDC, RGB(255, 255, 255)); // Weiß
+            SetBkMode(memDC, TRANSPARENT);
+            std::string dangerText = "GEFAHR!";
+            TextOutA(memDC, g_danger_position.x - 30, g_danger_position.y - 10, dangerText.c_str(), dangerText.length());
+            
+            // Aufräumen
+            DeleteObject(redBrush);
+            DeleteObject(redPen);
+            DeleteObject(darkRedBrush);
+        }
+        
+        // Automatisch nach 10 Sekunden ausschalten
+        if (elapsed > 10000) {  // 10 Sekunden
+            g_danger_active = false;
+            g_danger_position = Point(-1, -1);
         }
     }
     
@@ -1775,11 +1834,22 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
         }
 
         case WM_RBUTTONDOWN: {
-            // Rechtsklick: Fahrzeugauswahl aufheben
+            int mouseX = LOWORD(lParam);
+            int mouseY = HIWORD(lParam);
+            Point clickPos(static_cast<float>(mouseX), static_cast<float>(mouseY));
+            
             if (g_selected_vehicle_id != -1) {
+                // Rechtsklick: Fahrzeugauswahl aufheben
                 g_selected_vehicle_id = -1;
                 std::cout << "Fahrzeugauswahl aufgehoben" << std::endl;
                 InvalidateRect(hwnd, NULL, TRUE); // Neu zeichnen
+            } else {
+                // Kein Fahrzeug ausgewählt: Gefahren-Warnung an Klickposition aktivieren
+                g_danger_position = clickPos;
+                g_danger_active = true;
+                g_danger_start_time = std::chrono::steady_clock::now();
+                std::cout << "GEFAHR-Warnung aktiviert bei Position (" << clickPos.x << ", " << clickPos.y << ")" << std::endl;
+                InvalidateRect(hwnd, NULL, FALSE); // Neu zeichnen
             }
             return 0;
         }
@@ -1787,6 +1857,16 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
         case WM_KEYDOWN:
             if (wParam == VK_ESCAPE) {
                 PostQuitMessage(0);
+            }
+            
+            // Taste 'D' für DANGER - Gefahrenstelle deaktivieren
+            if (wParam == 'D' || wParam == 'd') {
+                if (g_danger_active) {
+                    g_danger_active = false;
+                    g_danger_position = Point(-1, -1);
+                    std::cout << "Gefahren-Warnung manuell deaktiviert" << std::endl;
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
             }
             
             // Pfeiltasten für manuelle Steuerung
@@ -1842,11 +1922,11 @@ LRESULT CALLBACK TestWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 void createWindowsAPITestWindow() {
     std::thread([]() {
-        // Initialisiere manuelles Test-Auto in der Mitte
+        // Initialisiere manuelles Test-Auto in der Mitte (DEAKTIVIERT - nur echte Autos anzeigen)
         Point startPos(FULLSCREEN_WIDTH / 2.0f, FULLSCREEN_HEIGHT / 2.0f);
         Point frontPos(startPos.x + 20.0f, startPos.y); // 20 Pixel nach rechts
         g_manual_vehicle = Auto(startPos, frontPos);  // Use existing constructor with 2 Points
-        g_manual_vehicle_active = true;
+        g_manual_vehicle_active = false;  // DEAKTIVIERT - zeige nur echte Autos
         
         // Warte kurz
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
